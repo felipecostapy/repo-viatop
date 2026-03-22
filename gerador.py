@@ -313,10 +313,22 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         if not chave.startswith("_"):
             dados[chave] = normalizar(dados[chave])
 
-    motorista = limpar_nome(dados.get("Motorista", "SEM"))
-    cavalo = limpar_nome(dados.get("Cavalo", "SEM"))
+    motorista_completo = dados.get("Motorista", "SEM")
+    primeiro_nome = limpar_nome(motorista_completo.split()[0] if motorista_completo else "SEM")
 
-    nome_arquivo = f"ORDEM_{motorista}_{cavalo}.xlsx"
+    cavalo_raw = dados.get("Cavalo", "SEM")
+    # Formata placa no modelo XXX-XXXX para o arquivo/pdf/email
+    import re as _re
+    cavalo_limpo = _re.sub(r"[^A-Za-z0-9]", "", cavalo_raw).upper()
+    if len(cavalo_limpo) > 3:
+        cavalo_formatado = cavalo_limpo[:3] + "-" + cavalo_limpo[3:7]
+    else:
+        cavalo_formatado = cavalo_limpo
+    dados["Cavalo"] = cavalo_formatado
+
+    cavalo = limpar_nome(cavalo_formatado)
+
+    nome_arquivo = f"ORDEM_{primeiro_nome}_{cavalo}.xlsx"
     caminho = os.path.join(pasta_destino, nome_arquivo)
 
     contador = 1

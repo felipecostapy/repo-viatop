@@ -486,10 +486,7 @@ class UI(QWidget):
             inp.setCompleter(completer)
         else:
             inp = QLineEdit()
-            if label == "Cavalo":
-                inp.setMaxLength(8)
-                inp.textChanged.connect(lambda texto, i=inp: self._formatar_placa(i, texto))
-            elif label not in ("CPF", "Contato"):
+            if label not in ("CPF", "Contato"):
                 inp.textChanged.connect(lambda texto, i=inp: self._forcar_maiusculo(i, texto))
 
         inp.setMinimumHeight(36)
