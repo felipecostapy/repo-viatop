@@ -328,7 +328,7 @@ class UI(QWidget):
         lay.addWidget(entrada, 0, 0, 1, 2)
         self.entradas["Assinatura"] = entrada
 
-        dev_label = QLabel("© 2026 dev by Felipe")
+        dev_label = QLabel("2026 dev by Felipe © ")
         dev_label.setAlignment(Qt.AlignCenter)
         dev_label.setStyleSheet("color: #3b4252; font-size: 11px; padding-top: 4px;")
         lay.addWidget(dev_label, 1, 0, 1, 2)
