@@ -14,6 +14,10 @@ GITHUB_USER    = "felipecostapy"
 GITHUB_REPO    = "repo-viatop"
 GITHUB_BRANCH  = "master"
 
+# Link direto do Google Drive para o credentials.json
+CREDENTIALS_DRIVE_ID  = "1ANUx62cswnhOpUmwOlyb-NwF4ji7VI-b"
+CREDENTIALS_FILE      = "credentials.json"
+
 # Arquivos a serem atualizados
 ARQUIVOS = [
     "interface.py",
@@ -80,6 +84,28 @@ def _baixar_arquivo(nome):
 def _salvar_versao(versao):
     path = _pasta_app() / VERSION_LOCAL_FILE
     path.write_text(versao, encoding="utf-8")
+
+
+# =========================
+# BAIXAR CREDENTIALS
+# =========================
+def _baixar_credentials():
+    """
+    Baixa o credentials.json do Google Drive se não existir na pasta do app.
+    """
+    dest = _pasta_app() / CREDENTIALS_FILE
+    if dest.exists():
+        return
+
+    url = f"https://drive.google.com/uc?export=download&id={CREDENTIALS_DRIVE_ID}"
+    tmp = dest.with_suffix(".tmp")
+    try:
+        urllib.request.urlretrieve(url, tmp)
+        shutil.move(str(tmp), str(dest))
+    except Exception as e:
+        if tmp.exists():
+            tmp.unlink()
+        # Não bloqueia o sistema se falhar — apenas ignora
 
 
 # =========================
@@ -182,6 +208,9 @@ def _mostrar_erro(mensagem):
 # FLUXO PRINCIPAL
 # =========================
 def verificar_e_atualizar():
+    # Baixa o credentials.json se ainda não existir
+    _baixar_credentials()
+
     versao_local  = _ler_versao_local()
     versao_remota = _ler_versao_remota()
 
