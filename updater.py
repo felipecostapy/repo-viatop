@@ -92,20 +92,41 @@ def _salvar_versao(versao):
 def _baixar_credentials():
     """
     Baixa o credentials.json do Google Drive se não existir na pasta do app.
+    Lida com o redirecionamento de confirmação do Google Drive.
     """
     dest = _pasta_app() / CREDENTIALS_FILE
     if dest.exists():
         return
 
-    url = f"https://drive.google.com/uc?export=download&id={CREDENTIALS_DRIVE_ID}"
     tmp = dest.with_suffix(".tmp")
     try:
-        urllib.request.urlretrieve(url, tmp)
-        shutil.move(str(tmp), str(dest))
-    except Exception as e:
+        session = urllib.request.urlopen(
+            f"https://drive.google.com/uc?export=download&id={CREDENTIALS_DRIVE_ID}&confirm=t",
+            timeout=10
+        )
+        conteudo = session.read()
+
+        # Verifica se é realmente JSON e não uma página HTML de confirmação
+        conteudo_str = conteudo.decode("utf-8", errors="ignore")
+        if conteudo_str.strip().startswith("{"):
+            with open(tmp, "wb") as f:
+                f.write(conteudo)
+            shutil.move(str(tmp), str(dest))
+        else:
+            # Tenta com o parâmetro de confirmação alternativo
+            import re
+            confirm = re.search(r'confirm=([0-9A-Za-z_]+)', conteudo_str)
+            token = confirm.group(1) if confirm else "t"
+            url2 = f"https://drive.google.com/uc?export=download&id={CREDENTIALS_DRIVE_ID}&confirm={token}"
+            session2 = urllib.request.urlopen(url2, timeout=10)
+            conteudo2 = session2.read()
+            with open(tmp, "wb") as f:
+                f.write(conteudo2)
+            shutil.move(str(tmp), str(dest))
+
+    except Exception:
         if tmp.exists():
             tmp.unlink()
-        # Não bloqueia o sistema se falhar — apenas ignora
 
 
 # =========================
