@@ -2,7 +2,7 @@ import sys
 import os
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt, QDate, QThread, Signal, QTimer
-from PySide6.QtGui import QFont, QPainter, QColor, QPixmap
+from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
 
@@ -209,6 +209,9 @@ class LoadingOverlay(QWidget):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._animar)
+
+        # Começa escondido e sem geometria para não aparecer minimizado
+        self.setGeometry(0, 0, 0, 0)
         self.hide()
 
     def showEvent(self, event):
@@ -245,6 +248,15 @@ class UI(QWidget):
 
         self.empresa = None
         self.setWindowTitle("Sistema de Ordens")
+        if getattr(sys, "frozen", False):
+            from pathlib import Path
+            _base = Path(sys._MEIPASS)
+        else:
+            from pathlib import Path
+            _base = Path(__file__).parent
+        _icone = _base / "icone.ico"
+        if _icone.exists():
+            self.setWindowIcon(QIcon(str(_icone)))
 
         # FUNDO COM LOGO
         self._bg_label = QLabel(self)
@@ -361,21 +373,11 @@ class UI(QWidget):
         self.setar_data_hoje()
 
     def _atualizar_fundo(self, empresa):
-        # Resolve o caminho base: dentro do .exe usa sys._MEIPASS, fora usa a pasta do script
-        if getattr(sys, "frozen", False):
-            from pathlib import Path
-            base = Path(sys._MEIPASS)
-        else:
-            from pathlib import Path
-            base = Path(__file__).parent
-
         nomes = {"Agrovia": "logo_agro.png", "TopBrasil": "logo_top.png"}
         arquivo = nomes.get(empresa, "")
-        caminho = str(base / arquivo) if arquivo else ""
-
-        if caminho and os.path.exists(caminho):
+        if arquivo and os.path.exists(arquivo):
             # Blur simulado: escala pra baixo e volta pra cima
-            original = QPixmap(caminho)
+            original = QPixmap(arquivo)
             pequeno = original.scaled(
                 original.width() // 8,
                 original.height() // 8,

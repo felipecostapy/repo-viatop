@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('logo_agro.png', '.'), ('logo_top.png', '.')]
+datas = [('logo_agro.png', '.'), ('logo_top.png', '.'), ('icone.ico', '.')]
 binaries = []
 hiddenimports = []
 tmp_ret = collect_all('PySide6')

@@ -92,39 +92,36 @@ def _salvar_versao(versao):
 def _baixar_credentials():
     """
     Baixa o credentials.json do Google Drive se não existir na pasta do app.
-    Lida com o redirecionamento de confirmação do Google Drive.
     """
     dest = _pasta_app() / CREDENTIALS_FILE
     if dest.exists():
         return
 
     tmp = dest.with_suffix(".tmp")
+    log = _pasta_app() / "credentials_log.txt"
     try:
-        session = urllib.request.urlopen(
-            f"https://drive.google.com/uc?export=download&id={CREDENTIALS_DRIVE_ID}&confirm=t",
-            timeout=10
-        )
-        conteudo = session.read()
+        url = f"https://drive.usercontent.google.com/download?id={CREDENTIALS_DRIVE_ID}&export=download&authuser=0"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            conteudo = resp.read()
 
-        # Verifica se é realmente JSON e não uma página HTML de confirmação
-        conteudo_str = conteudo.decode("utf-8", errors="ignore")
-        if conteudo_str.strip().startswith("{"):
-            with open(tmp, "wb") as f:
-                f.write(conteudo)
+        conteudo_str = conteudo.decode("utf-8", errors="ignore").strip()
+
+        with open(log, "w", encoding="utf-8") as f:
+            f.write(f"Tamanho: {len(conteudo)} bytes\n")
+            f.write(f"Primeiros 200 chars:\n{conteudo_str[:200]}\n")
+
+        if conteudo_str.startswith("{"):
+            with open(tmp, "w", encoding="utf-8") as f:
+                f.write(conteudo_str)
             shutil.move(str(tmp), str(dest))
         else:
-            # Tenta com o parâmetro de confirmação alternativo
-            import re
-            confirm = re.search(r'confirm=([0-9A-Za-z_]+)', conteudo_str)
-            token = confirm.group(1) if confirm else "t"
-            url2 = f"https://drive.google.com/uc?export=download&id={CREDENTIALS_DRIVE_ID}&confirm={token}"
-            session2 = urllib.request.urlopen(url2, timeout=10)
-            conteudo2 = session2.read()
-            with open(tmp, "wb") as f:
-                f.write(conteudo2)
-            shutil.move(str(tmp), str(dest))
+            with open(log, "a", encoding="utf-8") as f:
+                f.write("\nNao era JSON — nao salvou.\n")
 
-    except Exception:
+    except Exception as e:
+        with open(log, "w", encoding="utf-8") as f:
+            f.write(f"Erro: {e}\n")
         if tmp.exists():
             tmp.unlink()
 

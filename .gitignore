@@ -1,3 +1,7 @@
 credentials.json 
 gmail_tokens/ 
 dist/
+__pycache__/
+build/
+.Ds_Store
+Thumbs.db
