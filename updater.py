@@ -12,7 +12,7 @@ from pathlib import Path
 # =========================
 GITHUB_USER    = "felipecostapy"
 GITHUB_REPO    = "repo-viatop"
-GITHUB_BRANCH  = "main"
+GITHUB_BRANCH  = "master"
 
 # Arquivos a serem atualizados
 ARQUIVOS = [
@@ -20,8 +20,6 @@ ARQUIVOS = [
     "gerador.py",
     "logo_agro.png",
     "logo_top.png",
-    "ordempadraoagro.xlsx",
-    "ordempadraotop.xlsx",
 ]
 
 VERSION_LOCAL_FILE = "version.txt"
