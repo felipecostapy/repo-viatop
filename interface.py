@@ -1,161 +1,194 @@
 import sys
 import os
+from pathlib import Path
 from PySide6.QtWidgets import *
-from PySide6.QtCore import Qt, QDate, QThread, Signal, QTimer
-from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon
+from PySide6.QtCore import Qt, QDate, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon, QPalette
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
 
+# ─────────────────────────────────────────────
+# PALETA
+# ─────────────────────────────────────────────
+BG       = "#0d1117"
+SURFACE  = "#161b22"
+BORDER   = "#21262d"
+BORDER2  = "#30363d"
+TEXT     = "#e6edf3"
+MUTED    = "#8b949e"
+ACCENT   = "#238636"
+ACCENT_H = "#2ea043"
+ACCENT_L = "#1a7f37"
+DANGER   = "#da3633"
+DANGER_H = "#f85149"
 
-STYLE = """
-QWidget {
-    background-color: #0f1115;
-    color: #e5e7eb;
-    font-family: Arial;
-    font-size: 13px;
-}
-
-QLineEdit, QComboBox {
-    background-color: #1a1d23;
-    border: 1px solid #2a2f3a;
-    border-radius: 8px;
-    padding: 8px;
-    text-transform: uppercase;
-}
-
-QLineEdit:focus, QComboBox:focus {
-    border: 1px solid #3b82f6;
-}
-
-QLabel {
-    color: #9ca3af;
-}
-
-QPushButton {
-    border-radius: 8px;
-    padding: 12px;
-    font-weight: bold;
-}
-
-QPushButton:hover {
-    opacity: 0.85;
-    filter: brightness(1.15);
-}
-
-#btn_gerar {
-    background-color: #2e7d32;
-    color: white;
-}
-
-#btn_gerar:hover {
-    background-color: #388e3c;
-}
-
-#btn_email {
-    background-color: #2a2f3a;
-    color: #e5e7eb;
-}
-
-#btn_email:hover {
-    background-color: #353b4a;
-}
-
-#btn_nova {
-    background-color: transparent;
-    border: 1px solid #2a2f3a;
-    color: #e5e7eb;
-}
-
-#btn_nova:hover {
-    background-color: #1a1d23;
-    border: 1px solid #3b82f6;
-    color: #3b82f6;
-}
-
-#btn_wpp {
-    background-color: #1a3a2a;
-    color: #4ade80;
-    border: 1px solid #166534;
-}
-
-#btn_wpp:hover {
-    background-color: #1f4a33;
-    border: 1px solid #4ade80;
-}
+DIALOG_SS = f"""
+    QDialog {{ background-color: {BG}; }}
+    QLabel {{ color: {TEXT}; font-family: "Segoe UI"; font-size: 13px; background: transparent; }}
+    QLineEdit, QTextEdit, QComboBox {{
+        background-color: {SURFACE};
+        border: 1px solid {BORDER2};
+        border-radius: 6px;
+        padding: 8px 10px;
+        color: {TEXT};
+        font-size: 13px;
+    }}
+    QLineEdit:focus, QTextEdit:focus {{ border-color: {ACCENT}; }}
+    QPushButton {{
+        border-radius: 6px;
+        padding: 9px 18px;
+        font-weight: 700;
+        font-size: 13px;
+        font-family: "Segoe UI";
+    }}
+    #btn_ok   {{ background-color: {ACCENT}; color: white; border: none; }}
+    #btn_ok:hover {{ background-color: {ACCENT_H}; }}
+    #btn_cancel {{ background-color: transparent; border: 1px solid {BORDER2}; color: {MUTED}; }}
+    #btn_cancel:hover {{ background-color: {SURFACE}; color: {TEXT}; }}
+    #btn_add  {{ background-color: transparent; border: 1px solid {ACCENT}; color: {ACCENT}; }}
+    #btn_add:hover {{ background-color: {ACCENT}18; }}
+    #btn_agro {{ background-color: {ACCENT}; color: white; border: none; }}
+    #btn_agro:hover {{ background-color: {ACCENT_H}; }}
+    #btn_top  {{ background-color: {DANGER}; color: white; border: none; }}
+    #btn_top:hover {{ background-color: {DANGER_H}; }}
 """
 
 
-def criar_card(titulo):
-    box = QGroupBox(titulo.upper())
-    box.setStyleSheet("""
-        QGroupBox {
-            border: 1px solid #2a2f3a;
-            border-radius: 12px;
-            margin-top: 10px;
-            padding: 15px;
-            font-weight: bold;
-        }
-    """)
-
-    layout = QGridLayout()
-    layout.setHorizontalSpacing(15)
-    layout.setVerticalSpacing(10)
-    layout.setColumnStretch(0, 1)
-    layout.setColumnStretch(1, 1)
-    layout.setAlignment(Qt.AlignTop)
-
-    box.setLayout(layout)
-    return box, layout
+# ─────────────────────────────────────────────
+# HELPER: campo com label acima
+# ─────────────────────────────────────────────
+def make_field(label_text, widget):
+    """Retorna um QWidget com label acima + input abaixo."""
+    w = QWidget()
+    w.setStyleSheet("background: transparent;")
+    v = QVBoxLayout(w)
+    v.setContentsMargins(0, 0, 0, 0)
+    v.setSpacing(4)
+    lbl = QLabel(label_text.upper())
+    lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+    v.addWidget(lbl)
+    v.addWidget(widget)
+    return w
 
 
-# =========================
-# PARSER WHATSAPP
-# =========================
-def parsear_mensagem_whatsapp(texto):
-    """
-    Extrai campos do modelo de mensagem WhatsApp e retorna
-    um dict com os nomes dos campos do formulário.
-    """
+def make_input(placeholder="", maiusculo=True, max_len=None):
+    inp = QLineEdit()
+    inp.setMinimumHeight(36)
+    inp.setPlaceholderText(placeholder)
+    if max_len:
+        inp.setMaxLength(max_len)
+    if maiusculo:
+        inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
+    return inp
+
+
+def make_combo(items):
+    cb = QComboBox()
+    cb.setEditable(True)
+    cb.addItems(items)
+    cb.setMinimumHeight(36)
+    cb.setCompleter(QCompleter(items))
+    cb.completer().setCaseSensitivity(Qt.CaseInsensitive)
+    return cb
+
+
+def make_date():
+    d = QDateEdit()
+    d.setDisplayFormat("dd/MM/yyyy")
+    d.setDate(QDate.currentDate())
+    d.setCalendarPopup(True)
+    d.setMinimumHeight(36)
+    return d
+
+
+def _forcar_maiusculo(inp, texto):
+    if texto != texto.upper():
+        inp.blockSignals(True)
+        c = inp.cursorPosition()
+        inp.setText(texto.upper())
+        inp.setCursorPosition(c)
+        inp.blockSignals(False)
+
+
+def _formatar_placa(inp, texto):
     import re
+    limpo = re.sub(r"[^A-Za-z0-9]", "", texto).upper()
+    formatado = limpo[:3] + "-" + limpo[3:7] if len(limpo) > 3 else limpo
+    inp.blockSignals(True)
+    c = inp.cursorPosition()
+    inp.setText(formatado)
+    inp.setCursorPosition(min(c, len(formatado)))
+    inp.blockSignals(False)
 
+
+# ─────────────────────────────────────────────
+# SECTION CARD
+# ─────────────────────────────────────────────
+def make_card(title):
+    """QFrame com título, retorna (frame, content_widget)."""
+    frame = QFrame()
+    frame.setObjectName("card")
+    frame.setStyleSheet(f"""
+        QFrame#card {{
+            background-color: {SURFACE};
+            border: 1px solid {BORDER};
+            border-radius: 10px;
+        }}
+    """)
+    vbox = QVBoxLayout(frame)
+    vbox.setContentsMargins(16, 14, 16, 16)
+    vbox.setSpacing(12)
+
+    # Título
+    lbl = QLabel(title.upper())
+    lbl.setStyleSheet(f"""
+        color: {MUTED};
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 1.5px;
+        background: transparent;
+        padding-bottom: 4px;
+        border-bottom: 1px solid {BORDER};
+    """)
+    vbox.addWidget(lbl)
+
+    # Widget de conteúdo
+    content = QWidget()
+    content.setStyleSheet("background: transparent;")
+    vbox.addWidget(content)
+
+    return frame, content
+
+
+# ─────────────────────────────────────────────
+# PARSER WHATSAPP
+# ─────────────────────────────────────────────
+def parsear_mensagem_whatsapp(texto):
+    import re
     resultado = {}
 
     def extrair(chave):
         match = re.search(rf"^{chave}\s*:\s*(.+)", texto, re.IGNORECASE | re.MULTILINE)
         return match.group(1).strip() if match else ""
 
-    # TRANSPORTADORA → empresa
     transp = extrair("TRANSPORTADORA").upper()
-    if "AGRO" in transp:
-        resultado["empresa"] = "Agrovia"
-    else:
-        resultado["empresa"] = "TopBrasil"
+    resultado["empresa"] = "Agrovia" if "AGRO" in transp else "TopBrasil"
 
-    # PAGADOR → Fábrica (nome curto, ex: TIMAC)
-    pagador = extrair("PAGADOR").upper().split()[0] if extrair("PAGADOR") else ""
-    resultado["Fábrica"] = pagador
+    pagador_raw = extrair("CLIENTE/PAGADOR") or extrair("PAGADOR")
+    resultado["Fábrica"] = pagador_raw.upper().split()[0] if pagador_raw else ""
 
-    # CLIENTE (opcional)
     cliente = extrair("CLIENTE")
     if cliente:
         resultado["Cliente"] = cliente
 
-    # PEDIDO
-    resultado["Pedido"] = extrair("PEDIDO")
-
-    # PRODUTO
-    resultado["Produto"] = extrair("PRODUTO")
-
-    # PESO
-    resultado["Peso"] = extrair("PESO")
-
-    # MOTORISTA
+    resultado["Pedido"]    = extrair("PEDIDO")
+    resultado["Produto"]   = extrair("PRODUTO")
+    resultado["Peso"]      = extrair("PESO")
     resultado["Motorista"] = extrair("MOTORISTA")
+    resultado["Origem"]    = extrair("FABRICA")
 
-    # DESTINO → separar "BARREIRAS-BA FAZ COSMOS" em Destino + Fazenda
     destino_raw = extrair("DESTINO")
     if destino_raw:
-        # Tenta separar pela palavra FAZ, FAZENDA, SITIO, SITÍO, CHACARA
         sep = re.split(r"\s+(FAZ\.?\s|FAZENDA\s|SITIO\s|SÍTIO\s|CHACARA\s)", destino_raw, flags=re.IGNORECASE)
         if len(sep) >= 3:
             resultado["Destino"] = sep[0].strip()
@@ -164,21 +197,23 @@ def parsear_mensagem_whatsapp(texto):
             resultado["Destino"] = destino_raw.strip()
             resultado["Fazenda"] = ""
     else:
-        resultado["Destino"] = ""
-        resultado["Fazenda"] = ""
+        resultado["Destino"] = resultado["Fazenda"] = ""
 
     return resultado
 
 
+# ─────────────────────────────────────────────
+# THREAD
+# ─────────────────────────────────────────────
 class GeradorThread(QThread):
     sucesso = Signal()
-    erro = Signal(str)
+    erro    = Signal(str)
 
     def __init__(self, dados, pasta, email, conta_gmail=None):
         super().__init__()
-        self.dados = dados
-        self.pasta = pasta
-        self.email = email
+        self.dados       = dados
+        self.pasta       = pasta
+        self.email       = email
         self.conta_gmail = conta_gmail
 
     def run(self):
@@ -197,146 +232,352 @@ class GeradorThread(QThread):
             self.erro.emit(f"Erro inesperado: {e}")
 
 
+# ─────────────────────────────────────────────
+# OVERLAY
+# ─────────────────────────────────────────────
 class LoadingOverlay(QWidget):
     def __init__(self, parent):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self._dots = 0
+        self._dots  = 0
         self._label = QLabel("Gerando ordem", self)
         self._label.setAlignment(Qt.AlignCenter)
-        self._label.setStyleSheet("color: #e5e7eb; font-size: 15px; font-weight: bold; background: transparent;")
-
+        self._label.setStyleSheet(f"color: {TEXT}; font-size: 15px; font-weight: bold; background: transparent;")
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._animar)
-
-        # Começa escondido e sem geometria para não aparecer minimizado
         self.setGeometry(0, 0, 0, 0)
         self.hide()
 
-    def showEvent(self, event):
-        self._resize()
-        self._timer.start(400)
-        super().showEvent(event)
+    def showEvent(self, e):
+        self._resize(); self._timer.start(400); super().showEvent(e)
 
-    def hideEvent(self, event):
-        self._timer.stop()
-        super().hideEvent(event)
+    def hideEvent(self, e):
+        self._timer.stop(); super().hideEvent(e)
 
     def _resize(self):
         if self.parent():
             self.setGeometry(self.parent().rect())
             self._label.setGeometry(self.parent().rect())
 
-    def resizeEvent(self, event):
-        self._resize()
-        super().resizeEvent(event)
+    def resizeEvent(self, e):
+        self._resize(); super().resizeEvent(e)
 
     def _animar(self):
         self._dots = (self._dots + 1) % 4
         self._label.setText("Gerando ordem" + "." * self._dots)
 
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.fillRect(self.rect(), QColor(15, 17, 21, 210))
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.fillRect(self.rect(), QColor(13, 17, 23, 220))
 
 
+# ─────────────────────────────────────────────
+# UI PRINCIPAL
+# ─────────────────────────────────────────────
 class UI(QWidget):
     def __init__(self):
         super().__init__()
-
         self.empresa = None
-        self.setWindowTitle("Sistema de Ordens")
-        if getattr(sys, "frozen", False):
-            from pathlib import Path
-            _base = Path(sys._MEIPASS)
-        else:
-            from pathlib import Path
-            _base = Path(__file__).parent
-        _icone = _base / "icone.ico"
-        if _icone.exists():
-            self.setWindowIcon(QIcon(str(_icone)))
+        self.entradas = {}
+        self._pedido_linhas = []
 
-        # FUNDO COM LOGO
+        self.setWindowTitle("Sistema de Ordens")
+        self._setup_icon()
+        self._setup_bg()
+        self._build_ui()
+        self._apply_style()
+
+        self.overlay = LoadingOverlay(self)
+        self.showMaximized()
+        self.escolher_empresa()
+        self.setar_data_hoje()
+
+    # ── SETUP ──────────────────────────────────
+    def _setup_icon(self):
+        base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
+        ico = base / "icone.ico"
+        if ico.exists():
+            self.setWindowIcon(QIcon(str(ico)))
+
+    def _setup_bg(self):
         self._bg_label = QLabel(self)
         self._bg_label.setScaledContents(True)
         self._bg_label.setGeometry(self.rect())
         self._bg_label.lower()
 
-        self.entradas = {}
+    def _apply_style(self):
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {BG};
+                color: {TEXT};
+                font-family: "Segoe UI", sans-serif;
+                font-size: 13px;
+            }}
+            QLineEdit, QComboBox, QDateEdit {{
+                background-color: {SURFACE};
+                border: 1px solid {BORDER2};
+                border-radius: 6px;
+                padding: 8px 10px;
+                color: {TEXT};
+                min-height: 18px;
+            }}
+            QLineEdit:focus, QComboBox:focus, QDateEdit:focus {{
+                border-color: {ACCENT};
+                background-color: #1c2128;
+            }}
+            QLineEdit:hover, QComboBox:hover, QDateEdit:hover {{
+                border-color: {BORDER2};
+            }}
+            QComboBox::drop-down {{ border: none; width: 22px; }}
+            QComboBox QAbstractItemView {{
+                background-color: {SURFACE};
+                border: 1px solid {BORDER2};
+                selection-background-color: {ACCENT}22;
+                color: {TEXT};
+                outline: none;
+            }}
+            QLabel {{
+                color: {MUTED};
+                background: transparent;
+            }}
+            QScrollBar:vertical {{
+                background: transparent; width: 4px; border-radius: 2px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {BORDER2}; border-radius: 2px; min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{ background: {ACCENT}; }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+            QPushButton {{
+                border-radius: 6px;
+                padding: 11px 16px;
+                font-weight: 700;
+                font-size: 13px;
+                font-family: "Segoe UI", sans-serif;
+            }}
+            #btn_gerar {{
+                background-color: {ACCENT}; color: white; border: none;
+            }}
+            #btn_gerar:hover {{ background-color: {ACCENT_H}; }}
+            #btn_gerar:pressed {{ background-color: {ACCENT_L}; }}
+            #btn_email {{
+                background-color: transparent;
+                border: 1px solid {ACCENT};
+                color: {ACCENT};
+            }}
+            #btn_email:hover {{ background-color: {ACCENT}18; }}
+            #btn_nova {{
+                background-color: transparent;
+                border: 1px solid {BORDER2};
+                color: {MUTED};
+            }}
+            #btn_nova:hover {{
+                background-color: {SURFACE};
+                border-color: {BORDER2};
+                color: {TEXT};
+            }}
+            #btn_wpp {{
+                background-color: {ACCENT}; color: white; border: none;
+            }}
+            #btn_wpp:hover {{ background-color: {ACCENT_H}; }}
+            #btn_add_pedido {{
+                background-color: transparent;
+                border: 1px dashed {BORDER2};
+                color: {ACCENT};
+                font-size: 12px;
+                padding: 7px;
+            }}
+            #btn_add_pedido:hover {{
+                border-color: {ACCENT};
+                background-color: {ACCENT}0a;
+            }}
+        """)
 
-        main = QVBoxLayout(self)
+    # ── BUILD UI ───────────────────────────────
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
 
-        grid = QGridLayout()
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        grid.setHorizontalSpacing(20)
-        grid.setVerticalSpacing(20)
+        # ── LINHA 1: Cabeçalho | Motorista ──────
+        row1 = QHBoxLayout()
+        row1.setSpacing(10)
+        row1.setAlignment(Qt.AlignTop)
 
-        main.addLayout(grid)
+        cab = self._build_cabecalho()
+        cab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        mot = self._build_motorista()
+        mot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
-        # CABEÇALHO
-        card, lay = criar_card("Cabeçalho")
-        self.add_input(lay, "Data Apresentação", 0, 0)
-        self.add_input(lay, "Fábrica", 0, 1)
-        self.add_input(lay, "Solicitante", 0, 2)
-        grid.addWidget(card, 0, 0)
-        
-        self.entradas["Data Apresentação"].setMaximumWidth(120)
-        self.entradas["Fábrica"].setMinimumWidth(150)
-        self.entradas["Solicitante"].setMinimumWidth(200)
+        row1.addWidget(cab, 3)
+        row1.addWidget(mot, 2)
+        root.addLayout(row1)
 
-        # MOTORISTA
-        card, lay = criar_card("Motorista")
-        self.add_input(lay, "Motorista", 0, 0)
-        self.add_input(lay, "CPF", 0, 1)
-        self.add_input(lay, "Contato", 0, 2)
-        grid.addWidget(card, 0, 1)
+        # ── LINHA 2: Carga | Veículo ─────────────
+        row2 = QHBoxLayout()
+        row2.setSpacing(10)
+        row2.setAlignment(Qt.AlignTop)
 
-        # CARGA
-        card, lay = criar_card("Carga")
-        campos = ["Destino", "Fazenda", "Produto", "Embalagem", "Cliente", "Pedido", "Peso"]
+        car = self._build_carga()
+        car.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        vei = self._build_veiculo()
+        vei.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
-        for i, campo in enumerate(campos):
-            par   = i // 2          # qual par (0,1,2,3)
-            col   = i % 2           # coluna 0 ou 1
-            row   = par * 2         # linha do label: 0, 2, 4, 6
-            self.add_input(lay, campo, row, col)
+        row2.addWidget(car, 3)
+        row2.addWidget(vei, 2)
+        root.addLayout(row2)
 
-        lay.setVerticalSpacing(4)
+        # ── LINHA 3: Assinatura | Botões ─────────
+        row3 = QHBoxLayout()
+        row3.setSpacing(10)
+        row3.setAlignment(Qt.AlignTop)
 
-        grid.addWidget(card, 1, 0)
+        ass = self._build_assinatura()
+        ass.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        row3.addWidget(ass, 3)
+        row3.addLayout(self._build_botoes(), 2)
+        root.addLayout(row3)
 
-        # VEÍCULO
-        card, lay = criar_card("Veículo")
+        root.addStretch()
 
-        self.add_input(lay, "Carroceria", 0, 0, combo=[
-            "Graneleiro", "Basculante", "Baú", "Sider", "Tanque"
-        ])
-        self.add_input(lay, "Cavalo", 0, 1)
-        self.add_input(lay, "Carreta 1", 2, 0)
-        self.add_input(lay, "Carreta 2", 2, 1)
-        self.add_input(lay, "Carreta 3", 4, 0)
+    def _build_cabecalho(self):
+        frame, content = make_card("Cabeçalho")
+        v = QVBoxLayout(content)
+        v.setSpacing(8)
+        v.setContentsMargins(0, 0, 0, 0)
 
-        grid.addWidget(card, 1, 1)
+        # Linha 1: Data | Fábrica | Solicitante
+        r1 = QHBoxLayout(); r1.setSpacing(8)
+        self.entradas["Data Apresentação"] = make_date()
+        self.entradas["Fábrica"]    = make_input()
+        self.entradas["Solicitante"] = make_input()
+        r1.addWidget(make_field("Data", self.entradas["Data Apresentação"]), 1)
+        r1.addWidget(make_field("Fábrica", self.entradas["Fábrica"]), 2)
+        r1.addWidget(make_field("Solicitante", self.entradas["Solicitante"]), 2)
+        v.addLayout(r1)
 
-        # ASSINATURA
-        card, lay = criar_card("Assinatura")
-        entrada = QLineEdit()
-        entrada.setMinimumHeight(36)
-        lay.addWidget(entrada, 0, 0, 1, 2)
-        self.entradas["Assinatura"] = entrada
+        # Linha 2: Origem | Destino | Cliente
+        r2 = QHBoxLayout(); r2.setSpacing(8)
+        self.entradas["Origem"]  = make_input()
+        self.entradas["Destino"] = make_input()
+        self.entradas["Cliente"] = make_input()
+        r2.addWidget(make_field("Origem", self.entradas["Origem"]), 1)
+        r2.addWidget(make_field("Destino", self.entradas["Destino"]), 1)
+        r2.addWidget(make_field("Cliente", self.entradas["Cliente"]), 1)
+        v.addLayout(r2)
 
-        dev_label = QLabel("2026 dev by Felipe © ")
-        dev_label.setAlignment(Qt.AlignCenter)
-        dev_label.setStyleSheet("color: #3b4252; font-size: 11px; padding-top: 4px;")
-        lay.addWidget(dev_label, 1, 0, 1, 2)
+        # Linha 3: Fazenda (largo)
+        self.entradas["Fazenda"] = make_input()
+        v.addWidget(make_field("Fazenda", self.entradas["Fazenda"]))
 
-        grid.addWidget(card, 2, 0)
+        return frame
 
-        # BOTÕES
-        botoes = QVBoxLayout()
+    def _build_motorista(self):
+        frame, content = make_card("Motorista")
+        v = QVBoxLayout(content)
+        v.setSpacing(8)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        self.entradas["Motorista"] = make_input()
+        v.addWidget(make_field("Nome", self.entradas["Motorista"]))
+
+        r = QHBoxLayout(); r.setSpacing(8)
+        self.entradas["CPF"]     = make_input(maiusculo=False)
+        self.entradas["Contato"] = make_input(maiusculo=False)
+        r.addWidget(make_field("CPF", self.entradas["CPF"]), 1)
+        r.addWidget(make_field("Contato", self.entradas["Contato"]), 1)
+        v.addLayout(r)
+        v.addStretch()
+
+        return frame
+
+    def _build_carga(self):
+        frame, content = make_card("Carga")
+        v = QVBoxLayout(content)
+        v.setSpacing(6)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        # Header das colunas
+        header = QHBoxLayout(); header.setSpacing(8)
+        for txt, stretch in [("Pedido", 3), ("Produto", 3), ("Peso", 1), ("Embalagem", 2)]:
+            lbl = QLabel(txt.upper())
+            lbl.setStyleSheet(f"color: #444d56; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+            header.addWidget(lbl, stretch)
+        v.addLayout(header)
+
+        # Container das linhas
+        self._carga_container = QWidget()
+        self._carga_container.setStyleSheet("background: transparent;")
+        self._carga_vbox = QVBoxLayout(self._carga_container)
+        self._carga_vbox.setSpacing(6)
+        self._carga_vbox.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(self._carga_container)
+
+        # Botão +
+        self.btn_add_pedido = QPushButton("＋  ADICIONAR PEDIDO")
+        self.btn_add_pedido.setObjectName("btn_add_pedido")
+        self.btn_add_pedido.setMinimumHeight(32)
+        self.btn_add_pedido.clicked.connect(self._adicionar_linha_pedido)
+        v.addWidget(self.btn_add_pedido)
+
+        self._adicionar_linha_pedido()
+        return frame
+
+    def _build_veiculo(self):
+        frame, content = make_card("Veículo")
+        v = QVBoxLayout(content)
+        v.setSpacing(8)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        r1 = QHBoxLayout(); r1.setSpacing(8)
+        self.entradas["Carroceria"] = make_combo(["Graneleiro", "Basculante", "Baú", "Sider", "Tanque"])
+        self.entradas["Carroceria"].setCurrentIndex(-1)
+        self.entradas["Carroceria"].lineEdit().setPlaceholderText("Selecione...")
+        self.entradas["Cavalo"] = make_input()
+        self.entradas["Cavalo"].textChanged.disconnect()
+        self.entradas["Cavalo"].textChanged.connect(lambda t, i=self.entradas["Cavalo"]: _formatar_placa(i, t))
+        r1.addWidget(make_field("Carroceria", self.entradas["Carroceria"]), 1)
+        r1.addWidget(make_field("Cavalo", self.entradas["Cavalo"]), 1)
+        v.addLayout(r1)
+
+        r2 = QHBoxLayout(); r2.setSpacing(8)
+        self.entradas["Carreta 1"] = make_input()
+        self.entradas["Carreta 2"] = make_input()
+        r2.addWidget(make_field("Carreta 1", self.entradas["Carreta 1"]))
+        r2.addWidget(make_field("Carreta 2", self.entradas["Carreta 2"]))
+        v.addLayout(r2)
+
+        self.entradas["Carreta 3"] = make_input()
+        v.addWidget(make_field("Carreta 3", self.entradas["Carreta 3"]))
+        v.addStretch()
+
+        return frame
+
+    def _build_assinatura(self):
+        frame, content = make_card("Assinatura")
+        v = QVBoxLayout(content)
+        v.setSpacing(6)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        self.entradas["Assinatura"] = make_input(maiusculo=False)
+        self.entradas["Assinatura"].setMinimumHeight(40)
+        v.addWidget(self.entradas["Assinatura"])
+
+        dev = QLabel("© 2026 dev by Felipe")
+        dev.setAlignment(Qt.AlignCenter)
+        dev.setStyleSheet(f"color: #21262d; font-size: 10px; letter-spacing: 1px; background: transparent;")
+        v.addWidget(dev)
+        v.addStretch()
+
+        return frame
+
+    def _build_botoes(self):
+        v = QVBoxLayout()
+        v.setSpacing(8)
+
+        self.btn_wpp = QPushButton("📋  IMPORTAR WHATSAPP")
+        self.btn_wpp.setObjectName("btn_wpp")
 
         self.btn1 = QPushButton("GERAR ORDEM")
         self.btn1.setObjectName("btn_gerar")
@@ -347,183 +588,126 @@ class UI(QWidget):
         self.btn3 = QPushButton("NOVA ORDEM")
         self.btn3.setObjectName("btn_nova")
 
-        self.btn_wpp = QPushButton("📋  IMPORTAR WHATSAPP")
-        self.btn_wpp.setObjectName("btn_wpp")
+        for btn in [self.btn_wpp, self.btn1, self.btn2, self.btn3]:
+            btn.setMinimumHeight(44)
+            v.addWidget(btn)
 
+        v.addStretch()
+
+        self.btn_wpp.clicked.connect(self.importar_whatsapp)
         self.btn1.clicked.connect(lambda: self.executar(False))
         self.btn2.clicked.connect(lambda: self.executar(True))
         self.btn3.clicked.connect(self.nova_ordem)
-        self.btn_wpp.clicked.connect(self.importar_whatsapp)
 
-        botoes.addWidget(self.btn_wpp)
-        botoes.addSpacing(8)
-        botoes.addWidget(self.btn1)
-        botoes.addWidget(self.btn2)
-        botoes.addWidget(self.btn3)
-        botoes.addStretch()
+        return v
 
-        grid.addLayout(botoes, 2, 1, alignment=Qt.AlignTop)
+    # ── PEDIDOS DINÂMICOS ──────────────────────
+    def _adicionar_linha_pedido(self):
+        MAX = 4
+        if len(self._pedido_linhas) >= MAX:
+            return
 
-        self.setStyleSheet(STYLE)
+        idx    = len(self._pedido_linhas)
+        sufixo = f" {idx + 1}" if idx > 0 else ""
 
-        self.overlay = LoadingOverlay(self)
+        row_w = QWidget()
+        row_w.setStyleSheet("background: transparent;")
+        row_h = QHBoxLayout(row_w)
+        row_h.setContentsMargins(0, 0, 0, 0)
+        row_h.setSpacing(8)
 
-        self.showMaximized()
-        self.escolher_empresa()
-        self.setar_data_hoje()
+        linha = {}
+        for chave, stretch in [("Pedido", 3), ("Produto", 3), ("Peso", 1), ("Embalagem", 2)]:
+            inp = QLineEdit()
+            inp.setMinimumHeight(34)
+            inp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
+            row_h.addWidget(inp, stretch)
+            nome = chave + sufixo
+            linha[nome] = inp
+            self.entradas[nome] = inp
 
+        self._pedido_linhas.append((row_w, linha))
+        self._carga_vbox.addWidget(row_w)
+
+        if len(self._pedido_linhas) >= MAX:
+            self.btn_add_pedido.hide()
+
+    # ── FUNDO / RESIZE ─────────────────────────
     def _atualizar_fundo(self, empresa):
+        base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
         nomes = {"Agrovia": "logo_agro.png", "TopBrasil": "logo_top.png"}
         arquivo = nomes.get(empresa, "")
-        if arquivo and os.path.exists(arquivo):
-            # Blur simulado: escala pra baixo e volta pra cima
-            original = QPixmap(arquivo)
-            pequeno = original.scaled(
-                original.width() // 8,
-                original.height() // 8,
-                Qt.KeepAspectRatioByExpanding,
-                Qt.SmoothTransformation
-            )
-            borrado = pequeno.scaled(
-                original.width(),
-                original.height(),
-                Qt.KeepAspectRatioByExpanding,
-                Qt.SmoothTransformation
-            )
-            # Overlay escuro desenhado sobre o pixmap borrado
-            painter = QPainter(borrado)
-            painter.fillRect(borrado.rect(), QColor(15, 17, 21, 185))
-            painter.end()
+        caminho = str(base / arquivo)
+        if arquivo and os.path.exists(caminho):
+            original = QPixmap(caminho)
+            pequeno  = original.scaled(original.width() // 8, original.height() // 8,
+                                       Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            borrado  = pequeno.scaled(original.width(), original.height(),
+                                      Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
+            p = QPainter(borrado)
+            p.fillRect(borrado.rect(), QColor(13, 17, 23, 210))
+            p.end()
             self._bg_label.setPixmap(borrado)
         else:
             self._bg_label.setPixmap(QPixmap())
         self._bg_label.setGeometry(self.rect())
         self._bg_label.lower()
 
-    def resizeEvent(self, event):
+    def resizeEvent(self, e):
         self._bg_label.setGeometry(self.rect())
-        super().resizeEvent(event)
+        super().resizeEvent(e)
 
+    # ── EMPRESA ────────────────────────────────
     def setar_data_hoje(self):
-        if isinstance(self.entradas["Data Apresentação"], QDateEdit):
-            self.entradas["Data Apresentação"].setDate(QDate.currentDate())
-        else:
-            hoje = QDate.currentDate().toString("dd/MM/yyyy")
-            self.entradas["Data Apresentação"].setText(hoje)
+        self.entradas["Data Apresentação"].setDate(QDate.currentDate())
 
     def escolher_empresa(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Escolher Empresa")
-        dialog.setFixedSize(320, 220)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Sistema de Ordens")
+        dlg.setFixedSize(340, 230)
+        dlg.setStyleSheet(DIALOG_SS)
 
-        # ✅ RESTAURADO
-        dialog.setStyleSheet("""
-            QDialog { background-color: #0f1115; }
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(24, 24, 24, 24)
+        lay.setSpacing(10)
 
-            QLabel {
-                color: #e5e7eb;
-                font-size: 14px;
-            }
+        t1 = QLabel("SELECIONE A EMPRESA")
+        t1.setAlignment(Qt.AlignCenter)
+        t1.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px;")
 
-            QPushButton {
-                border-radius: 8px;
-                padding: 12px;
-                font-weight: bold;
-            }
+        t2 = QLabel("Sistema de Ordens de Carregamento")
+        t2.setAlignment(Qt.AlignCenter)
+        t2.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
 
-            #agro { background-color: #2e7d32; color: white; }
-            #top { background-color: #c62828; color: white; }
-        """)
+        btn_a = QPushButton("AGROVIA")
+        btn_a.setObjectName("btn_agro")
+        btn_a.setMinimumHeight(42)
 
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
+        btn_t = QPushButton("TOPBRASIL")
+        btn_t.setObjectName("btn_top")
+        btn_t.setMinimumHeight(42)
 
-        titulo = QLabel("ESCOLHA A EMPRESA")
-        titulo.setAlignment(Qt.AlignCenter)
-
-        btn_agro = QPushButton("AGROVIA")
-        btn_agro.setObjectName("agro")
-
-        btn_top = QPushButton("TOPBRASIL")
-        btn_top.setObjectName("top")
-
-        def selecionar(nome):
+        def sel(nome):
             self.empresa = nome
-            if nome == "Agrovia":
-                self.btn1.setStyleSheet("background-color: #2e7d32; color: white;")
-            else:
-                self.btn1.setStyleSheet("background-color: #c62828; color: white;")
+            cor = ACCENT if nome == "Agrovia" else DANGER
+            self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
             self._atualizar_fundo(nome)
-            dialog.accept()
+            dlg.accept()
 
-        btn_agro.clicked.connect(lambda: selecionar("Agrovia"))
-        btn_top.clicked.connect(lambda: selecionar("TopBrasil"))
+        btn_a.clicked.connect(lambda: sel("Agrovia"))
+        btn_t.clicked.connect(lambda: sel("TopBrasil"))
 
-        layout.addWidget(titulo)
-        layout.addWidget(btn_agro)
-        layout.addWidget(btn_top)
+        lay.addWidget(t1)
+        lay.addWidget(t2)
+        lay.addSpacing(6)
+        lay.addWidget(btn_a)
+        lay.addWidget(btn_t)
+        dlg.exec()
 
-        dialog.exec()
-
-    def add_input(self, layout, label, row, col, combo=None):
-        lbl = QLabel(label)
-        layout.addWidget(lbl, row, col)
-
-        if label == "Data Apresentação":
-            inp = QDateEdit()
-            inp.setDisplayFormat("dd/MM/yyyy")
-            inp.setDate(QDate.currentDate())
-            inp.setCalendarPopup(True)
-
-        elif combo:
-            inp = QComboBox()
-            inp.setEditable(True)
-            inp.addItems(combo)
-
-            completer = QCompleter(combo)
-            completer.setCaseSensitivity(Qt.CaseInsensitive)
-            inp.setCompleter(completer)
-        else:
-            inp = QLineEdit()
-            if label not in ("CPF", "Contato"):
-                inp.textChanged.connect(lambda texto, i=inp: self._forcar_maiusculo(i, texto))
-
-        inp.setMinimumHeight(36)
-        inp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
-        layout.addWidget(inp, row + 1, col, 1, 1)
-        self.entradas[label] = inp
-
-    def _forcar_maiusculo(self, inp, texto):
-        if texto != texto.upper():
-            inp.blockSignals(True)
-            cursor = inp.cursorPosition()
-            inp.setText(texto.upper())
-            inp.setCursorPosition(cursor)
-            inp.blockSignals(False)
-
-    def _formatar_placa(self, inp, texto):
-        """Formata a placa no modelo XXX-XXXX em maiúsculas enquanto digita."""
-        import re
-        # Remove tudo que não for alfanumérico e converte para maiúsculas
-        limpo = re.sub(r"[^A-Za-z0-9]", "", texto).upper()
-        # Aplica máscara XXX-XXXX
-        if len(limpo) > 3:
-            formatado = limpo[:3] + "-" + limpo[3:7]
-        else:
-            formatado = limpo
-        # Bloqueia o sinal para não entrar em loop
-        inp.blockSignals(True)
-        cursor = inp.cursorPosition()
-        inp.setText(formatado)
-        # Mantém o cursor na posição correta
-        inp.setCursorPosition(min(cursor, len(formatado)))
-        inp.blockSignals(False)
-
+    # ── COLETAR ────────────────────────────────
     def coletar(self):
         dados = {"empresa": self.empresa}
-
         for k, v in self.entradas.items():
             if isinstance(v, QComboBox):
                 dados[k] = v.currentText()
@@ -531,42 +715,37 @@ class UI(QWidget):
                 dados[k] = v.date().toString("dd/MM/yyyy")
             else:
                 dados[k] = v.text()
-
         return dados
 
+    # ── EXECUTAR ───────────────────────────────
     def executar(self, email):
         pasta = QFileDialog.getExistingDirectory(self, "Salvar em")
         if not pasta:
             return
 
         dados = self.coletar()
-
         if not dados.get("Motorista") or not dados.get("Cavalo"):
             QMessageBox.warning(self, "Atenção", "Preencha Motorista e Cavalo")
             return
 
         conta_gmail = None
-        preview_email = None
         if email:
             conta_gmail = self._dialog_escolher_conta()
             if conta_gmail is None:
                 return
-
             from gerador import obter_email_fabrica, montar_email
-            destinatario = obter_email_fabrica(dados.get("Fábrica"))
-            assunto, corpo = montar_email(dados)
-            preview_email = self._dialog_preview_email(destinatario, assunto, corpo)
-            if preview_email is None:
+            prev = self._dialog_preview_email(
+                obter_email_fabrica(dados.get("Fábrica")),
+                *montar_email(dados)
+            )
+            if prev is None:
                 return
-            # Usa os valores (possivelmente editados) do preview
-            dados["_email_destinatario"] = preview_email["destinatario"]
-            dados["_email_assunto"]      = preview_email["assunto"]
-            dados["_email_corpo"]        = preview_email["corpo"]
+            dados["_email_destinatario"] = prev["destinatario"]
+            dados["_email_assunto"]      = prev["assunto"]
+            dados["_email_corpo"]        = prev["corpo"]
 
-        self.btn1.setEnabled(False)
-        self.btn2.setEnabled(False)
-        self.btn3.setEnabled(False)
-
+        for b in [self.btn1, self.btn2, self.btn3]:
+            b.setEnabled(False)
         self.overlay.show()
         self.overlay.raise_()
 
@@ -575,310 +754,185 @@ class UI(QWidget):
         self._thread.erro.connect(self._on_erro)
         self._thread.start()
 
+    # ── DIALOGS ────────────────────────────────
     def _dialog_escolher_conta(self):
-        """
-        Abre um dialog para escolher (ou adicionar) conta Gmail.
-        Retorna o email selecionado, ou None se cancelado.
-        """
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Enviar por Gmail")
-        dialog.setFixedSize(400, 220)
-        dialog.setStyleSheet("""
-            QDialog { background-color: #0f1115; }
-            QLabel { color: #e5e7eb; font-size: 13px; }
-            QComboBox {
-                background-color: #1a1d23;
-                border: 1px solid #2a2f3a;
-                border-radius: 8px;
-                padding: 8px;
-                color: #e5e7eb;
-                min-height: 36px;
-            }
-            QPushButton {
-                border-radius: 8px;
-                padding: 10px;
-                font-weight: bold;
-            }
-            #btn_ok     { background-color: #166534; color: #4ade80; }
-            #btn_cancel { background-color: #2a2f3a; color: #e5e7eb; }
-            #btn_add    { background-color: transparent; border: 1px solid #3b82f6; color: #3b82f6; padding: 6px; }
-        """)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Enviar por Gmail")
+        dlg.setFixedSize(400, 230)
+        dlg.setStyleSheet(DIALOG_SS)
 
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(10)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(10)
 
-        layout.addWidget(QLabel("Escolha a conta remetente:"))
+        lay.addWidget(QLabel("Conta remetente:"))
 
         combo = QComboBox()
+        combo.setMinimumHeight(36)
         contas = _listar_contas_gmail()
-        if contas:
-            combo.addItems(contas)
-        else:
-            combo.addItem("(nenhuma conta configurada)")
-        layout.addWidget(combo)
+        combo.addItems(contas if contas else ["(nenhuma conta configurada)"])
+        lay.addWidget(combo)
 
         btn_add = QPushButton("+ Adicionar conta Gmail")
         btn_add.setObjectName("btn_add")
-        layout.addWidget(btn_add)
+        lay.addWidget(btn_add)
 
         btns = QHBoxLayout()
-        btn_cancel = QPushButton("CANCELAR")
-        btn_cancel.setObjectName("btn_cancel")
-        btn_ok = QPushButton("ENVIAR")
-        btn_ok.setObjectName("btn_ok")
-        btns.addWidget(btn_cancel)
-        btns.addWidget(btn_ok)
-        layout.addLayout(btns)
+        bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
+        bo = QPushButton("ENVIAR");   bo.setObjectName("btn_ok")
+        btns.addWidget(bc); btns.addWidget(bo)
+        lay.addLayout(btns)
 
         resultado = [None]
 
         def adicionar():
             try:
-                email_novo = adicionar_conta_gmail()
+                novo = adicionar_conta_gmail()
                 combo.clear()
                 combo.addItems(_listar_contas_gmail())
-                idx = combo.findText(email_novo)
+                idx = combo.findText(novo)
                 if idx >= 0:
                     combo.setCurrentIndex(idx)
             except Exception as e:
-                QMessageBox.critical(dialog, "Erro", str(e))
+                QMessageBox.critical(dlg, "Erro", str(e))
 
         def confirmar():
-            conta = combo.currentText()
-            if conta == "(nenhuma conta configurada)":
-                QMessageBox.warning(dialog, "Atenção", "Adicione uma conta Gmail primeiro.")
+            c = combo.currentText()
+            if c == "(nenhuma conta configurada)":
+                QMessageBox.warning(dlg, "Atenção", "Adicione uma conta Gmail primeiro.")
                 return
-            resultado[0] = conta
-            dialog.accept()
+            resultado[0] = c
+            dlg.accept()
 
         btn_add.clicked.connect(adicionar)
-        btn_cancel.clicked.connect(dialog.reject)
-        btn_ok.clicked.connect(confirmar)
-
-        dialog.exec()
+        bc.clicked.connect(dlg.reject)
+        bo.clicked.connect(confirmar)
+        dlg.exec()
         return resultado[0]
 
     def _dialog_preview_email(self, destinatario, assunto, corpo):
-        """
-        Mostra prévia do email antes de enviar. Campos editáveis.
-        Retorna dict com destinatario/assunto/corpo, ou None se cancelado.
-        """
-        DIALOG_STYLE = """
-            QDialog { background-color: #0f1115; }
-            QLabel { color: #6b7280; font-size: 11px; }
-            QLineEdit, QTextEdit {
-                background-color: #1a1d23;
-                border: 1px solid #2a2f3a;
-                border-radius: 6px;
-                padding: 8px;
-                color: #e5e7eb;
-                font-size: 13px;
-            }
-            QLineEdit:focus, QTextEdit:focus { border: 1px solid #3b82f6; }
-            QPushButton { border-radius: 8px; padding: 10px; font-weight: bold; }
-            #btn_ok     { background-color: #166534; color: #4ade80; }
-            #btn_cancel { background-color: #2a2f3a; color: #e5e7eb; }
-        """
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Prévia do email")
+        dlg.setMinimumWidth(520)
+        dlg.setStyleSheet(DIALOG_SS)
 
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Prévia do email")
-        dialog.setMinimumWidth(520)
-        dialog.setStyleSheet(DIALOG_STYLE)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(8)
 
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(8)
+        lay.addWidget(QLabel("DESTINATÁRIO"))
+        inp_d = QLineEdit(destinatario); inp_d.setMinimumHeight(36)
+        lay.addWidget(inp_d)
 
-        layout.addWidget(QLabel("DESTINATÁRIO"))
-        inp_dest = QLineEdit(destinatario)
-        inp_dest.setMinimumHeight(36)
-        layout.addWidget(inp_dest)
+        lay.addWidget(QLabel("ASSUNTO"))
+        inp_a = QLineEdit(assunto); inp_a.setMinimumHeight(36)
+        lay.addWidget(inp_a)
 
-        layout.addWidget(QLabel("ASSUNTO"))
-        inp_assunto = QLineEdit(assunto)
-        inp_assunto.setMinimumHeight(36)
-        layout.addWidget(inp_assunto)
-
-        layout.addWidget(QLabel("CORPO"))
-        inp_corpo = QTextEdit()
-        inp_corpo.setPlainText(corpo)
-        inp_corpo.setMinimumHeight(120)
-        layout.addWidget(inp_corpo)
+        lay.addWidget(QLabel("CORPO"))
+        inp_c = QTextEdit(); inp_c.setPlainText(corpo); inp_c.setMinimumHeight(120)
+        lay.addWidget(inp_c)
 
         btns = QHBoxLayout()
-        btn_cancel = QPushButton("CANCELAR")
-        btn_cancel.setObjectName("btn_cancel")
-        btn_ok = QPushButton("CONFIRMAR ENVIO")
-        btn_ok.setObjectName("btn_ok")
-        btns.addWidget(btn_cancel)
-        btns.addWidget(btn_ok)
-        layout.addLayout(btns)
+        bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
+        bo = QPushButton("CONFIRMAR ENVIO"); bo.setObjectName("btn_ok")
+        btns.addWidget(bc); btns.addWidget(bo)
+        lay.addLayout(btns)
 
         resultado = [None]
 
         def confirmar():
             resultado[0] = {
-                "destinatario": inp_dest.text().strip(),
-                "assunto":      inp_assunto.text().strip(),
-                "corpo":        inp_corpo.toPlainText().strip(),
+                "destinatario": inp_d.text().strip(),
+                "assunto":      inp_a.text().strip(),
+                "corpo":        inp_c.toPlainText().strip(),
             }
-            dialog.accept()
+            dlg.accept()
 
-        btn_cancel.clicked.connect(dialog.reject)
-        btn_ok.clicked.connect(confirmar)
-
-        dialog.exec()
+        bc.clicked.connect(dlg.reject)
+        bo.clicked.connect(confirmar)
+        dlg.exec()
         return resultado[0]
-        self.overlay.hide()
-        self.btn1.setEnabled(True)
-        self.btn2.setEnabled(True)
-        self.btn3.setEnabled(True)
 
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Sucesso")
-        msg.setText("✔ Ordem gerada com sucesso")
-        msg.setIcon(QMessageBox.NoIcon)
-
-        msg.setStyleSheet("""
-        QMessageBox {
-            background-color: #0f1115;
-        }
-
-        QLabel {
-            color: #e5e7eb;
-            font-size: 13px;
-        }
-
-        QPushButton {
-            background-color: #2e7d32;
-            color: white;
-            border-radius: 6px;
-            padding: 6px 15px;
-        }
-        """)
-
-        msg.exec()
-
+    # ── SUCESSO / ERRO ─────────────────────────
     def _on_sucesso(self):
         self.overlay.hide()
-        self.btn1.setEnabled(True)
-        self.btn2.setEnabled(True)
-        self.btn3.setEnabled(True)
+        for b in [self.btn1, self.btn2, self.btn3]:
+            b.setEnabled(True)
 
         msg = QMessageBox(self)
         msg.setWindowTitle("Sucesso")
-        msg.setText("✔ Ordem gerada com sucesso")
+        msg.setText("✔  Ordem gerada com sucesso")
         msg.setIcon(QMessageBox.NoIcon)
-
-        msg.setStyleSheet("""
-        QMessageBox { background-color: #0f1115; }
-        QLabel { color: #e5e7eb; font-size: 13px; }
-        QPushButton {
-            background-color: #2e7d32;
-            color: white;
-            border-radius: 6px;
-            padding: 6px 15px;
-        }
+        msg.setStyleSheet(f"""
+            QMessageBox {{ background-color: {BG}; }}
+            QLabel {{ color: {TEXT}; font-size: 13px; }}
+            QPushButton {{
+                background-color: {ACCENT}; color: white;
+                border-radius: 6px; padding: 6px 18px; font-weight: 700;
+            }}
         """)
-
         msg.exec()
 
     def _on_erro(self, mensagem):
         self.overlay.hide()
-        self.btn1.setEnabled(True)
-        self.btn2.setEnabled(True)
-        self.btn3.setEnabled(True)
+        for b in [self.btn1, self.btn2, self.btn3]:
+            b.setEnabled(True)
         QMessageBox.critical(self, "Erro", mensagem)
 
+    # ── WHATSAPP ───────────────────────────────
     def importar_whatsapp(self):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Importar mensagem do WhatsApp")
-        dialog.setFixedSize(480, 360)
-        dialog.setStyleSheet("""
-            QDialog { background-color: #0f1115; }
-            QLabel { color: #e5e7eb; font-size: 13px; }
-            QTextEdit {
-                background-color: #1a1d23;
-                border: 1px solid #2a2f3a;
-                border-radius: 8px;
-                padding: 8px;
-                color: #e5e7eb;
-                font-size: 12px;
-            }
-            QPushButton {
-                border-radius: 8px;
-                padding: 10px;
-                font-weight: bold;
-            }
-            #btn_ok  { background-color: #166534; color: #4ade80; }
-            #btn_cancel { background-color: #2a2f3a; color: #e5e7eb; }
-        """)
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Importar WhatsApp")
+        dlg.setFixedSize(480, 360)
+        dlg.setStyleSheet(DIALOG_SS)
 
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(10)
 
-        lbl = QLabel("Cole a mensagem do WhatsApp abaixo:")
+        lay.addWidget(QLabel("Cole a mensagem do WhatsApp:"))
         caixa = QTextEdit()
         caixa.setPlaceholderText("🗒️ TAG\nTRANSPORTADORA: TOP BRASIL\n...")
+        lay.addWidget(caixa)
 
         btns = QHBoxLayout()
-        btn_ok = QPushButton("PREENCHER")
-        btn_ok.setObjectName("btn_ok")
-        btn_cancel = QPushButton("CANCELAR")
-        btn_cancel.setObjectName("btn_cancel")
-        btns.addWidget(btn_cancel)
-        btns.addWidget(btn_ok)
+        bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
+        bo = QPushButton("PREENCHER"); bo.setObjectName("btn_ok")
+        btns.addWidget(bc); btns.addWidget(bo)
+        lay.addLayout(btns)
 
-        layout.addWidget(lbl)
-        layout.addWidget(caixa)
-        layout.addLayout(btns)
-
-        btn_cancel.clicked.connect(dialog.reject)
+        bc.clicked.connect(dlg.reject)
 
         def confirmar():
             texto = caixa.toPlainText().strip()
             if not texto:
                 return
-            dados = parsear_mensagem_whatsapp(texto)
-            self._preencher_campos(dados)
-            dialog.accept()
+            self._preencher_campos(parsear_mensagem_whatsapp(texto))
+            dlg.accept()
 
-        btn_ok.clicked.connect(confirmar)
-        dialog.exec()
+        bo.clicked.connect(confirmar)
+        dlg.exec()
 
     def _preencher_campos(self, dados):
-        mapa = {
-            "Fábrica":    "Fábrica",
-            "Pedido":     "Pedido",
-            "Produto":    "Produto",
-            "Peso":       "Peso",
-            "Motorista":  "Motorista",
-            "Destino":    "Destino",
-            "Fazenda":    "Fazenda",
-            "Cliente":    "Cliente",
-        }
-
-        for chave, campo in mapa.items():
-            valor = dados.get(chave, "")
+        campos = ["Fábrica", "Cliente", "Fazenda", "Origem", "Destino",
+                  "Pedido", "Produto", "Peso", "Motorista"]
+        for campo in campos:
+            valor = dados.get(campo, "")
             if not valor:
                 continue
-            widget = self.entradas.get(campo)
-            if isinstance(widget, QLineEdit):
-                widget.setText(valor)
-            elif isinstance(widget, QComboBox):
-                widget.setEditText(valor)
+            w = self.entradas.get(campo)
+            if isinstance(w, QLineEdit):
+                w.setText(valor)
+            elif isinstance(w, QComboBox):
+                w.setEditText(valor)
 
-        # Atualiza empresa se veio na mensagem
-        empresa = dados.get("empresa")
-        if empresa:
-            self.empresa = empresa
-            if empresa == "Agrovia":
-                self.btn1.setStyleSheet("background-color: #2e7d32; color: white;")
-            else:
-                self.btn1.setStyleSheet("background-color: #c62828; color: white;")
+        emp = dados.get("empresa")
+        if emp:
+            self.empresa = emp
+            cor = ACCENT if emp == "Agrovia" else DANGER
+            self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
 
+    # ── NOVA ORDEM ─────────────────────────────
     def nova_ordem(self):
         for v in self.entradas.values():
             if isinstance(v, QLineEdit):
@@ -888,6 +942,15 @@ class UI(QWidget):
             elif isinstance(v, QDateEdit):
                 v.setDate(QDate.currentDate())
 
+        # Remove linhas extras de pedido
+        while len(self._pedido_linhas) > 1:
+            row_w, linha = self._pedido_linhas.pop()
+            self._carga_vbox.removeWidget(row_w)
+            row_w.deleteLater()
+            for chave in linha:
+                self.entradas.pop(chave, None)
+
+        self.btn_add_pedido.show()
         self.escolher_empresa()
         self.setar_data_hoje()
 

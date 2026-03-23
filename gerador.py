@@ -269,9 +269,9 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     # MODELO
     # =========================
     if dados["empresa"] == "Agrovia":
-        arquivo_modelo = "ordempadraoagro.xlsx"
+        arquivo_modelo = "ordemagroviav2.xlsx"
     else:
-        arquivo_modelo = "ordempadraotop.xlsx"
+        arquivo_modelo = "ordemtopv2.xlsx"
 
     if not os.path.exists(arquivo_modelo):
         raise Exception("Modelo não encontrado!")
@@ -280,27 +280,32 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     # CAMPOS
     # =========================
     CAMPOS = {
-        "Data Apresentação": "M5",
-        "Fábrica": ["M6", "M7"],
-        "Solicitante": ["M8", "M9"],
-        "Motorista": "F13",
-        "CPF": "N13",
-        "Contato": "F15",
-        "Destino": "F21",
-        "Fazenda": "N21",
-        "Produto": "F22",
-        "Embalagem": "N22",
-        "Cliente": "F23",
-        "Pedido": "M23",
-        "Peso": "F24",
-        "Carroceria": "I37",
-        "Cavalo": "I38",
-        "Carreta 1": "I39",
-        "Carreta 2": "I40",
-        "Carreta 3": "I41",
-        "Data Geração": "C44",
-        "Assinatura": "J44"
+        "Origem":        "J10",
+        "Data Apresentação": "J11",
+        "Destino":       "O10",
+        "Solicitante":   "O11",
+        "Fábrica":       "D15",
+        "Cliente":       "I15",
+        "Fazenda":       "O15",
+        "Motorista":     "D27",
+        "CPF":           "D28",
+        "Contato":       "M28",
+        "Carroceria":    "I32",
+        "Cavalo":        "I33",
+        "Carreta 1":     "I34",
+        "Carreta 2":     "I35",
+        "Carreta 3":     "I36",
+        "Data Geração":  "F39",
+        "Assinatura":    "K39",
     }
+
+    # Linhas de pedidos (até 4)
+    LINHAS_PEDIDO = [
+        ("Pedido",   "B20", "Produto",   "E20", "Peso",   "N20", "Embalagem",   "O20"),
+        ("Pedido 2", "B21", "Produto 2", "E21", "Peso 2", "N21", "Embalagem 2", "O21"),
+        ("Pedido 3", "B22", "Produto 3", "E22", "Peso 3", "N22", "Embalagem 3", "O22"),
+        ("Pedido 4", "B23", "Produto 4", "E23", "Peso 4", "N23", "Embalagem 4", "O23"),
+    ]
 
     # =========================
     # TRATAR DADOS
@@ -359,12 +364,18 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
 
         for campo, celula in CAMPOS.items():
             valor = dados.get(campo, "")
-
             if isinstance(celula, list):
                 for c in celula:
                     ws.range(c).value = valor
             else:
                 ws.range(celula).value = valor
+
+        # Preenche linhas de pedido/produto/peso/embalagem
+        for ped_key, ped_cel, prod_key, prod_cel, peso_key, peso_cel, emb_key, emb_cel in LINHAS_PEDIDO:
+            ws.range(ped_cel).value  = dados.get(ped_key, "")
+            ws.range(prod_cel).value = dados.get(prod_key, "")
+            ws.range(peso_cel).value = dados.get(peso_key, "")
+            ws.range(emb_cel).value  = dados.get(emb_key, "")
 
         wb.save()
         app.api.CalculateFull()
