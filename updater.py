@@ -24,7 +24,7 @@ ARQUIVOS = [
     "gerador.py",
     "logo_agro.png",
     "logo_top.png",
-    "ordagroviav2.xlsx",
+    "ordemagroviav2.xlsx",
     "ordemtopv2.xlsx",
 ]
 
