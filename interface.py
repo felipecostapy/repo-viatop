@@ -171,33 +171,82 @@ def parsear_mensagem_whatsapp(texto):
         match = re.search(rf"^{chave}\s*:\s*(.+)", texto, re.IGNORECASE | re.MULTILINE)
         return match.group(1).strip() if match else ""
 
-    transp = extrair("TRANSPORTADORA").upper()
-    resultado["empresa"] = "Agrovia" if "AGRO" in transp else "TopBrasil"
+    # FILIAL → empresa
+    filial = extrair("FILIAL").upper()
+    resultado["empresa"] = "Agrovia" if "AGRO" in filial else "TopBrasil"
 
-    pagador_raw = extrair("CLIENTE/PAGADOR") or extrair("PAGADOR")
-    resultado["Fábrica"] = pagador_raw.upper().split()[0] if pagador_raw else ""
+    # PAGADOR → Fábrica (primeira palavra)
+    pagador = extrair("PAGADOR")
+    resultado["Fábrica"] = pagador.upper().split()[0] if pagador else ""
 
+    # CLIENTE
     cliente = extrair("CLIENTE")
     if cliente:
         resultado["Cliente"] = cliente
 
-    resultado["Pedido"]    = extrair("PEDIDO")
-    resultado["Produto"]   = extrair("PRODUTO")
-    resultado["Peso"]      = extrair("PESO")
+    # MOTORISTA / PLACA / PESO
     resultado["Motorista"] = extrair("MOTORISTA")
-    resultado["Origem"]    = extrair("FABRICA")
+    resultado["Cavalo"]    = extrair("PLACA")
+    resultado["Peso"]      = extrair("PESO")
 
+    # FABRICA → Origem
+    resultado["Origem"] = extrair("FABRICA")
+
+    # PRODUTO (único para todos os pedidos)
+    resultado["Produto"] = extrair("PRODUTO")
+
+    # DESTINO + UF → "Cidade - UF"
     destino_raw = extrair("DESTINO")
-    if destino_raw:
-        sep = re.split(r"\s+(FAZ\.?\s|FAZENDA\s|SITIO\s|SÍTIO\s|CHACARA\s)", destino_raw, flags=re.IGNORECASE)
+    uf = extrair("UF").upper()
+    if destino_raw and uf:
+        destino_completo = f"{destino_raw.strip()} - {uf}"
+    elif destino_raw:
+        destino_completo = destino_raw.strip()
+    else:
+        destino_completo = ""
+
+    if destino_completo:
+        sep = re.split(r"\s+(FAZ\.?\s|FAZENDA\s|SITIO\s|SÍTIO\s|CHACARA\s)", destino_completo, flags=re.IGNORECASE)
         if len(sep) >= 3:
             resultado["Destino"] = sep[0].strip()
             resultado["Fazenda"] = (sep[1] + sep[2]).strip()
         else:
-            resultado["Destino"] = destino_raw.strip()
+            resultado["Destino"] = destino_completo
             resultado["Fazenda"] = ""
     else:
         resultado["Destino"] = resultado["Fazenda"] = ""
+
+    # FAZENDA explícita sobrescreve
+    fazenda = extrair("FAZENDA")
+    if fazenda:
+        resultado["Fazenda"] = fazenda
+
+    # PEDIDOS numerados: PEDIDO 1, PEDIDO 2, etc.
+    # Tenta primeiro o formato numerado
+    pedidos = []
+    for i in range(1, 5):
+        p = extrair(f"PEDIDO {i}")
+        if p:
+            pedidos.append(p)
+
+    # Fallback: PEDIDO simples (sem número)
+    if not pedidos:
+        p = extrair("PEDIDO")
+        if p:
+            pedidos.append(p)
+
+    # Distribui pedidos nos campos
+    produto = resultado.get("Produto", "")
+    peso    = resultado.get("Peso", "")
+
+    for idx, ped in enumerate(pedidos):
+        sufixo = f" {idx + 1}" if idx > 0 else ""
+        resultado[f"Pedido{sufixo}"]   = ped
+        resultado[f"Produto{sufixo}"]  = produto
+        resultado[f"Peso{sufixo}"]     = peso
+
+    # Guarda quantidade de pedidos para a interface adicionar as linhas
+    resultado["_num_pedidos"] = len(pedidos)
 
     return resultado
 
@@ -330,6 +379,16 @@ class UI(QWidget):
                 border-color: {BORDER2};
             }}
             QComboBox::drop-down {{ border: none; width: 22px; }}
+            QComboBox::down-arrow {{
+                image: none;
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid {MUTED};
+                width: 0;
+                height: 0;
+                margin-right: 8px;
+            }}
+            QComboBox::down-arrow:hover {{ border-top-color: {TEXT}; }}
             QComboBox QAbstractItemView {{
                 background-color: {SURFACE};
                 border: 1px solid {BORDER2};
@@ -378,9 +437,11 @@ class UI(QWidget):
                 color: {TEXT};
             }}
             #btn_wpp {{
-                background-color: {ACCENT}; color: white; border: none;
+                background-color: #1a3a24;
+                color: #4ade80;
+                border: 1px solid #238636;
             }}
-            #btn_wpp:hover {{ background-color: {ACCENT_H}; }}
+            #btn_wpp:hover {{ background-color: #1f4a2e; border-color: #4ade80; }}
             #btn_add_pedido {{
                 background-color: transparent;
                 border: 1px dashed {BORDER2};
@@ -397,8 +458,21 @@ class UI(QWidget):
     # ── BUILD UI ───────────────────────────────
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(10)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ScrollArea envolvendo tudo
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        inner = QVBoxLayout(container)
+        inner.setContentsMargins(16, 16, 16, 16)
+        inner.setSpacing(10)
 
         # ── LINHA 1: Cabeçalho | Motorista ──────
         row1 = QHBoxLayout()
@@ -412,7 +486,7 @@ class UI(QWidget):
 
         row1.addWidget(cab, 3)
         row1.addWidget(mot, 2)
-        root.addLayout(row1)
+        inner.addLayout(row1)
 
         # ── LINHA 2: Carga | Veículo ─────────────
         row2 = QHBoxLayout()
@@ -426,7 +500,7 @@ class UI(QWidget):
 
         row2.addWidget(car, 3)
         row2.addWidget(vei, 2)
-        root.addLayout(row2)
+        inner.addLayout(row2)
 
         # ── LINHA 3: Assinatura | Botões ─────────
         row3 = QHBoxLayout()
@@ -437,9 +511,12 @@ class UI(QWidget):
         ass.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         row3.addWidget(ass, 3)
         row3.addLayout(self._build_botoes(), 2)
-        root.addLayout(row3)
+        inner.addLayout(row3)
 
-        root.addStretch()
+        inner.addStretch()
+
+        scroll.setWidget(container)
+        root.addWidget(scroll)
 
     def _build_cabecalho(self):
         frame, content = make_card("Cabeçalho")
@@ -616,16 +693,53 @@ class UI(QWidget):
         row_h.setContentsMargins(0, 0, 0, 0)
         row_h.setSpacing(8)
 
+        EMBALAGENS = ["BIG BAG", "SACO 50KG", "SACO 25KG", "SACO 40KG", "GRANEL", "PALETIZADO"]
+
         linha = {}
         for chave, stretch in [("Pedido", 3), ("Produto", 3), ("Peso", 1), ("Embalagem", 2)]:
-            inp = QLineEdit()
-            inp.setMinimumHeight(34)
-            inp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
+            if chave == "Embalagem":
+                inp = QComboBox()
+                inp.setEditable(True)
+                inp.addItems(EMBALAGENS)
+                inp.setCurrentIndex(-1)
+                inp.lineEdit().setPlaceholderText("EMBALAGEM")
+                comp = QCompleter(EMBALAGENS)
+                comp.setCaseSensitivity(Qt.CaseInsensitive)
+                inp.setCompleter(comp)
+                inp.setMinimumHeight(34)
+            else:
+                inp = QLineEdit()
+                inp.setMinimumHeight(34)
+                inp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
             row_h.addWidget(inp, stretch)
             nome = chave + sufixo
             linha[nome] = inp
             self.entradas[nome] = inp
+
+        # Botão deletar — só aparece a partir da segunda linha
+        btn_del = QPushButton("×")
+        btn_del.setFixedSize(28, 34)
+        btn_del.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: 1px solid #30363d;
+                border-radius: 6px;
+                color: #8b949e;
+                font-size: 16px;
+                font-weight: bold;
+                padding: 0;
+            }}
+            QPushButton:hover {{
+                background-color: #da363320;
+                border-color: #da3633;
+                color: #f85149;
+            }}
+        """)
+        if idx == 0:
+            btn_del.setVisible(False)
+        btn_del.clicked.connect(lambda _, rw=row_w, ln=linha: self._deletar_linha_pedido(rw, ln))
+        row_h.addWidget(btn_del)
 
         self._pedido_linhas.append((row_w, linha))
         self._carga_vbox.addWidget(row_w)
@@ -704,6 +818,30 @@ class UI(QWidget):
         lay.addWidget(btn_a)
         lay.addWidget(btn_t)
         dlg.exec()
+
+    # ── DELETAR PEDIDO ─────────────────────────
+    def _deletar_linha_pedido(self, row_w, linha):
+        self._pedido_linhas = [(rw, ln) for rw, ln in self._pedido_linhas if rw is not row_w]
+        self._carga_vbox.removeWidget(row_w)
+        row_w.deleteLater()
+        for chave in linha:
+            self.entradas.pop(chave, None)
+        self.btn_add_pedido.show()
+
+        # Renomeia campos para manter sequência correta
+        for idx, (rw, ln) in enumerate(self._pedido_linhas):
+            novo_sufixo = f" {idx + 1}" if idx > 0 else ""
+            nova_linha = {}
+            for chave_antiga, widget in list(ln.items()):
+                base = chave_antiga.rsplit(" ", 1)[0] if " " in chave_antiga else chave_antiga
+                novo_nome = base + novo_sufixo
+                nova_linha[novo_nome] = widget
+                for k in list(self.entradas.keys()):
+                    if self.entradas[k] is widget:
+                        del self.entradas[k]
+                        break
+                self.entradas[novo_nome] = widget
+            self._pedido_linhas[idx] = (rw, nova_linha)
 
     # ── COLETAR ────────────────────────────────
     def coletar(self):
@@ -914,9 +1052,15 @@ class UI(QWidget):
         dlg.exec()
 
     def _preencher_campos(self, dados):
-        campos = ["Fábrica", "Cliente", "Fazenda", "Origem", "Destino",
-                  "Pedido", "Produto", "Peso", "Motorista"]
-        for campo in campos:
+        # Adiciona linhas de pedido necessárias
+        num_pedidos = dados.get("_num_pedidos", 1)
+        while len(self._pedido_linhas) < num_pedidos:
+            self._adicionar_linha_pedido()
+
+        # Preenche campos simples
+        campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
+                          "Destino", "Motorista", "Cavalo"]
+        for campo in campos_simples:
             valor = dados.get(campo, "")
             if not valor:
                 continue
@@ -926,6 +1070,20 @@ class UI(QWidget):
             elif isinstance(w, QComboBox):
                 w.setEditText(valor)
 
+        # Preenche linhas de pedido
+        for idx in range(num_pedidos):
+            sufixo = f" {idx + 1}" if idx > 0 else ""
+            for chave in ["Pedido", "Produto", "Peso", "Embalagem"]:
+                valor = dados.get(f"{chave}{sufixo}", "")
+                if not valor:
+                    continue
+                w = self.entradas.get(f"{chave}{sufixo}")
+                if isinstance(w, QLineEdit):
+                    w.setText(valor)
+                elif isinstance(w, QComboBox):
+                    w.setEditText(valor)
+
+        # Empresa
         emp = dados.get("empresa")
         if emp:
             self.empresa = emp

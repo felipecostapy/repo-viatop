@@ -372,10 +372,22 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
 
         # Preenche linhas de pedido/produto/peso/embalagem
         for ped_key, ped_cel, prod_key, prod_cel, peso_key, peso_cel, emb_key, emb_cel in LINHAS_PEDIDO:
-            ws.range(ped_cel).value  = dados.get(ped_key, "")
-            ws.range(prod_cel).value = dados.get(prod_key, "")
-            ws.range(peso_cel).value = dados.get(peso_key, "")
-            ws.range(emb_cel).value  = dados.get(emb_key, "")
+            ped  = dados.get(ped_key, "")
+            prod = dados.get(prod_key, "")
+            peso = dados.get(peso_key, "")
+            emb  = dados.get(emb_key, "")
+
+            # Se linha vazia, preenche com X
+            if not ped and not prod and not peso and not emb:
+                ws.range(ped_cel).value  = "x"
+                ws.range(prod_cel).value = "x"
+                ws.range(peso_cel).value = "x"
+                ws.range(emb_cel).value  = "x"
+            else:
+                ws.range(ped_cel).value  = ped
+                ws.range(prod_cel).value = prod
+                ws.range(peso_cel).value = peso
+                ws.range(emb_cel).value  = emb
 
         wb.save()
         app.api.CalculateFull()

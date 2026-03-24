@@ -24,8 +24,8 @@ ARQUIVOS = [
     "gerador.py",
     "logo_agro.png",
     "logo_top.png",
-    "ordempadraoagro.xlsx",
-    "ordempadraotop.xlsx",
+    "ordagroviav2.xlsx",
+    "ordemtopv2.xlsx",
 ]
 
 VERSION_LOCAL_FILE = "version.txt"
