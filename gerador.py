@@ -1,16 +1,11 @@
 import os
 import time
 
-
-# =========================
-# GMAIL — CREDENCIAIS
-# =========================
 CREDENTIALS_FILE = "credentials.json"
 TOKENS_DIR = "gmail_tokens"
 
-
 def _listar_contas_gmail():
-    """Retorna lista de contas que já têm token salvo."""
+                                                         
     if not os.path.exists(TOKENS_DIR):
         os.makedirs(TOKENS_DIR)
     contas = []
@@ -20,13 +15,12 @@ def _listar_contas_gmail():
             contas.append(conta)
     return contas
 
-
 def _autenticar_gmail(conta):
-    """
-    Autentica uma conta Gmail via OAuth2.
-    Se não houver token salvo, abre o navegador para autorização.
-    Retorna um serviço autenticado da Gmail API.
-    """
+\
+\
+\
+\
+       
     from google.oauth2.credentials import Credentials
     from google_auth_oauthlib.flow import InstalledAppFlow
     from google.auth.transport.requests import Request
@@ -61,9 +55,8 @@ def _autenticar_gmail(conta):
 
     return build("gmail", "v1", credentials=creds)
 
-
 def _montar_mensagem_gmail(remetente, destinatario, assunto, corpo, pdf_path):
-    """Monta o objeto MIMEMultipart com corpo e anexo PDF."""
+                                                             
     import base64
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
@@ -87,19 +80,17 @@ def _montar_mensagem_gmail(remetente, destinatario, assunto, corpo, pdf_path):
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     return {"raw": raw}
 
-
 def enviar_email_gmail(conta, destinatario, assunto, corpo, pdf_path):
-    """Autentica e envia o email com PDF anexado via Gmail API."""
+                                                                  
     service = _autenticar_gmail(conta)
     mensagem = _montar_mensagem_gmail(conta, destinatario, assunto, corpo, pdf_path)
     service.users().messages().send(userId="me", body=mensagem).execute()
 
-
 def adicionar_conta_gmail():
-    """
-    Força o fluxo de autorização para uma nova conta Gmail.
-    Retorna o email da conta autorizada.
-    """
+\
+\
+\
+       
     from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
     import json
@@ -122,7 +113,6 @@ def adicionar_conta_gmail():
     flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
     creds = flow.run_local_server(port=0)
 
-    # Obtém o email via id_token ou userinfo
     email = None
     try:
         import google.auth.transport.requests
@@ -136,7 +126,7 @@ def adicionar_conta_gmail():
         pass
 
     if not email:
-        # Fallback: userinfo endpoint
+                                     
         import urllib.request
         req = urllib.request.Request(
             "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
@@ -155,10 +145,6 @@ def adicionar_conta_gmail():
 
     return email
 
-
-# =========================
-# FORMATAR TELEFONE
-# =========================
 def formatar_telefone(telefone):
     if not telefone:
         return ""
@@ -171,16 +157,11 @@ def formatar_telefone(telefone):
         return f"({numeros[:2]}) {numeros[2:6]}-{numeros[6:]}"
     return telefone
 
-
-# =========================
-# EMAIL POR FÁBRICA
-# =========================
 REGRAS_EMAIL = {
     "FERTIMAXI": "agendamento@fertimaxi.com;paulo@fertimaxi.com",
     "TIMAC": "EMAIL_AQUI_3",
     "INTERMARITIMA": "EMAIL_AQUI_4"
 }
-
 
 def obter_email_fabrica(fabrica):
     fabrica = (fabrica or "").upper()
@@ -191,10 +172,6 @@ def obter_email_fabrica(fabrica):
 
     return "SEU_EMAIL@gmail.com"
 
-
-# =========================
-# MONTAR EMAIL
-# =========================
 def montar_email(dados):
     cavalo = dados.get("Cavalo", "")
     pedido = dados.get("Pedido", "")
@@ -210,10 +187,6 @@ DIA {data}"""
 
     return assunto, corpo
 
-
-# =========================
-# LOCALIZAR EXCEL.EXE
-# =========================
 def _encontrar_excel():
     caminhos = [
         r"C:\Program Files\Microsoft Office\root\Office16\EXCEL.EXE",
@@ -228,26 +201,16 @@ def _encontrar_excel():
             return c
     return None
 
-
-# =========================
-# FUNÇÃO PRINCIPAL
-# =========================
 def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     import xlwings as xw
     import shutil
 
-    # =========================
-    # VALIDAÇÃO
-    # =========================
     obrigatorios = ["Motorista", "Cavalo", "Pedido"]
 
     for campo in obrigatorios:
         if not dados.get(campo):
             raise Exception(f"Campo obrigatório não preenchido: {campo}")
 
-    # =========================
-    # AUXILIARES
-    # =========================
     def formatar_cpf(cpf):
         cpf = cpf.replace(".", "").replace("-", "").strip()
         if len(cpf) == 11 and cpf.isdigit():
@@ -265,9 +228,6 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
             return " ".join(valor.strip().upper().split())
         return valor
 
-    # =========================
-    # MODELO
-    # =========================
     if dados["empresa"] == "Agrovia":
         arquivo_modelo = "ordemagroviav2.xlsx"
     else:
@@ -276,9 +236,6 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     if not os.path.exists(arquivo_modelo):
         raise Exception("Modelo não encontrado!")
 
-    # =========================
-    # CAMPOS
-    # =========================
     CAMPOS = {
         "Origem":        "J10",
         "Data Apresentação": "J11",
@@ -299,7 +256,6 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         "Assinatura":    "K39",
     }
 
-    # Linhas de pedidos (até 4)
     LINHAS_PEDIDO = [
         ("Pedido",   "B20", "Produto",   "E20", "Peso",   "N20", "Embalagem",   "O20"),
         ("Pedido 2", "B21", "Produto 2", "E21", "Peso 2", "N21", "Embalagem 2", "O21"),
@@ -307,9 +263,6 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         ("Pedido 4", "B23", "Produto 4", "E23", "Peso 4", "N23", "Embalagem 4", "O23"),
     ]
 
-    # =========================
-    # TRATAR DADOS
-    # =========================
     dados["CPF"] = formatar_cpf(dados.get("CPF", ""))
     dados["Contato"] = formatar_telefone(dados.get("Contato", ""))
     dados["Data Geração"] = time.strftime("%d/%m/%Y")
@@ -322,7 +275,7 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     primeiro_nome = limpar_nome(motorista_completo.split()[0] if motorista_completo else "SEM")
 
     cavalo_raw = dados.get("Cavalo", "SEM")
-    # Formata placa no modelo XXX-XXXX para o arquivo/pdf/email
+                                                               
     import re as _re
     cavalo_limpo = _re.sub(r"[^A-Za-z0-9]", "", cavalo_raw).upper()
     if len(cavalo_limpo) > 3:
@@ -344,9 +297,6 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
 
     shutil.copy(arquivo_modelo, caminho)
 
-    # =========================
-    # EXCEL OTIMIZADO
-    # =========================
     app = None
     wb = None
 
@@ -370,14 +320,12 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
             else:
                 ws.range(celula).value = valor
 
-        # Preenche linhas de pedido/produto/peso/embalagem
         for ped_key, ped_cel, prod_key, prod_cel, peso_key, peso_cel, emb_key, emb_cel in LINHAS_PEDIDO:
             ped  = dados.get(ped_key, "")
             prod = dados.get(prod_key, "")
             peso = dados.get(peso_key, "")
             emb  = dados.get(emb_key, "")
 
-            # Se linha vazia, preenche com X
             if not ped and not prod and not peso and not emb:
                 ws.range(ped_cel).value  = "x"
                 ws.range(prod_cel).value = "x"
@@ -394,9 +342,6 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
 
         pdf_path = caminho.replace(".xlsx", ".pdf")
 
-        # =========================
-        # EXPORTAR PDF COM FALLBACK
-        # =========================
         try:
             wb.api.ExportAsFixedFormat(0, pdf_path)
         except Exception:
@@ -467,13 +412,10 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         except:
             pass
 
-    # =========================
-    # EMAIL
-    # =========================
     if enviar_email:
         if not conta_gmail:
             raise Exception("Nenhuma conta Gmail selecionada para envio.")
-        # Usa valores editados no preview se disponíveis
+                                                        
         destinatario = dados.get("_email_destinatario") or obter_email_fabrica(dados.get("Fábrica"))
         assunto      = dados.get("_email_assunto")      or montar_email(dados)[0]
         corpo        = dados.get("_email_corpo")        or montar_email(dados)[1]

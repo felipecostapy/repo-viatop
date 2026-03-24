@@ -7,18 +7,13 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-# =========================
-# CONFIGURAÇÃO — EDITE AQUI
-# =========================
 GITHUB_USER    = "felipecostapy"
 GITHUB_REPO    = "repo-viatop"
 GITHUB_BRANCH  = "master"
 
-# Link direto do Google Drive para o credentials.json
 CREDENTIALS_DRIVE_ID  = "1ANUx62cswnhOpUmwOlyb-NwF4ji7VI-b"
 CREDENTIALS_FILE      = "credentials.json"
 
-# Arquivos a serem atualizados
 ARQUIVOS = [
     "interface.py",
     "gerador.py",
@@ -32,22 +27,17 @@ VERSION_LOCAL_FILE = "version.txt"
 VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/version.txt"
 BASE_URL    = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}"
 
-# =========================
-# HELPERS
-# =========================
 def _pasta_app():
-    """Retorna a pasta onde o executável (ou script) está."""
+                                                             
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).parent
-
 
 def _ler_versao_local():
     path = _pasta_app() / VERSION_LOCAL_FILE
     if path.exists():
         return path.read_text(encoding="utf-8").strip()
     return "0.0.0"
-
 
 def _ler_versao_remota():
     try:
@@ -56,16 +46,14 @@ def _ler_versao_remota():
     except Exception:
         return None
 
-
 def _versao_maior(remota, local):
-    """Retorna True se remota > local (comparação semântica x.y.z)."""
+                                                                      
     def parse(v):
         try:
             return tuple(int(x) for x in v.split("."))
         except Exception:
             return (0, 0, 0)
     return parse(remota) > parse(local)
-
 
 def _baixar_arquivo(nome):
     url  = f"{BASE_URL}/{nome}"
@@ -80,19 +68,14 @@ def _baixar_arquivo(nome):
             tmp.unlink()
         raise Exception(f"Falha ao baixar {nome}: {e}")
 
-
 def _salvar_versao(versao):
     path = _pasta_app() / VERSION_LOCAL_FILE
     path.write_text(versao, encoding="utf-8")
 
-
-# =========================
-# BAIXAR CREDENTIALS
-# =========================
 def _baixar_credentials():
-    """
-    Baixa o credentials.json do Google Drive se não existir na pasta do app.
-    """
+\
+\
+       
     dest = _pasta_app() / CREDENTIALS_FILE
     if dest.exists():
         return
@@ -125,15 +108,11 @@ def _baixar_credentials():
         if tmp.exists():
             tmp.unlink()
 
-
-# =========================
-# DIALOG DE ATUALIZAÇÃO
-# =========================
 def _perguntar_usuario(versao_local, versao_remota):
-    """
-    Exibe um dialog PySide6 perguntando se o usuário quer atualizar.
-    Retorna True se confirmar, False se recusar.
-    """
+\
+\
+\
+       
     from PySide6.QtWidgets import QApplication, QMessageBox
     from PySide6.QtCore import Qt
 
@@ -168,9 +147,8 @@ def _perguntar_usuario(versao_local, versao_remota):
     msg.exec()
     return msg.clickedButton() == btn_sim
 
-
 def _mostrar_progresso(total):
-    """Retorna um dialog simples de progresso."""
+                                                 
     from PySide6.QtWidgets import QApplication, QDialog, QVBoxLayout, QLabel, QProgressBar
     from PySide6.QtCore import Qt
 
@@ -210,7 +188,6 @@ def _mostrar_progresso(total):
 
     return dialog, lbl, bar
 
-
 def _mostrar_erro(mensagem):
     from PySide6.QtWidgets import QApplication, QMessageBox
     app = QApplication.instance() or QApplication(sys.argv)
@@ -221,28 +198,21 @@ def _mostrar_erro(mensagem):
     msg.setStyleSheet("QMessageBox { background-color: #0f1115; } QLabel { color: #e5e7eb; }")
     msg.exec()
 
-
-# =========================
-# FLUXO PRINCIPAL
-# =========================
 def verificar_e_atualizar():
-    # Baixa o credentials.json se ainda não existir
+                                                   
     _baixar_credentials()
 
     versao_local  = _ler_versao_local()
     versao_remota = _ler_versao_remota()
 
-    # Sem conexão ou sem versão nova — segue normalmente
     if not versao_remota:
         return
     if not _versao_maior(versao_remota, versao_local):
         return
 
-    # Pergunta ao usuário
     if not _perguntar_usuario(versao_local, versao_remota):
         return
 
-    # Baixa os arquivos com barra de progresso
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(sys.argv)
 
@@ -259,7 +229,6 @@ def verificar_e_atualizar():
         _salvar_versao(versao_remota)
         dialog.close()
 
-        # Avisa que vai reiniciar
         from PySide6.QtWidgets import QMessageBox
         msg = QMessageBox()
         msg.setWindowTitle("Atualização concluída")
@@ -268,7 +237,6 @@ def verificar_e_atualizar():
         msg.setIcon(QMessageBox.NoIcon)
         msg.exec()
 
-        # Reinicia o executável
         exe = sys.executable
         os.execv(exe, [exe] + sys.argv)
 
@@ -276,12 +244,7 @@ def verificar_e_atualizar():
         dialog.close()
         _mostrar_erro(str(e))
 
-
-# =========================
-# ENTRY POINT
-# =========================
 if __name__ == "__main__":
     verificar_e_atualizar()
 
-    # Inicia a interface principal
-    import interface  # noqa
+    import interface

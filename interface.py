@@ -7,9 +7,6 @@ from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon, QPalette
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
 
-# ─────────────────────────────────────────────
-# PALETA
-# ─────────────────────────────────────────────
 BG       = "#0d1117"
 SURFACE  = "#161b22"
 BORDER   = "#21262d"
@@ -53,12 +50,8 @@ DIALOG_SS = f"""
     #btn_top:hover {{ background-color: {DANGER_H}; }}
 """
 
-
-# ─────────────────────────────────────────────
-# HELPER: campo com label acima
-# ─────────────────────────────────────────────
 def make_field(label_text, widget):
-    """Retorna um QWidget com label acima + input abaixo."""
+                                                            
     w = QWidget()
     w.setStyleSheet("background: transparent;")
     v = QVBoxLayout(w)
@@ -70,7 +63,6 @@ def make_field(label_text, widget):
     v.addWidget(widget)
     return w
 
-
 def make_input(placeholder="", maiusculo=True, max_len=None):
     inp = QLineEdit()
     inp.setMinimumHeight(36)
@@ -81,7 +73,6 @@ def make_input(placeholder="", maiusculo=True, max_len=None):
         inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
     return inp
 
-
 def make_combo(items):
     cb = QComboBox()
     cb.setEditable(True)
@@ -91,7 +82,6 @@ def make_combo(items):
     cb.completer().setCaseSensitivity(Qt.CaseInsensitive)
     return cb
 
-
 def make_date():
     d = QDateEdit()
     d.setDisplayFormat("dd/MM/yyyy")
@@ -100,7 +90,6 @@ def make_date():
     d.setMinimumHeight(36)
     return d
 
-
 def _forcar_maiusculo(inp, texto):
     if texto != texto.upper():
         inp.blockSignals(True)
@@ -108,7 +97,6 @@ def _forcar_maiusculo(inp, texto):
         inp.setText(texto.upper())
         inp.setCursorPosition(c)
         inp.blockSignals(False)
-
 
 def _formatar_placa(inp, texto):
     import re
@@ -120,12 +108,8 @@ def _formatar_placa(inp, texto):
     inp.setCursorPosition(min(c, len(formatado)))
     inp.blockSignals(False)
 
-
-# ─────────────────────────────────────────────
-# SECTION CARD
-# ─────────────────────────────────────────────
 def make_card(title):
-    """QFrame com título, retorna (frame, content_widget)."""
+                                                             
     frame = QFrame()
     frame.setObjectName("card")
     frame.setStyleSheet(f"""
@@ -139,7 +123,6 @@ def make_card(title):
     vbox.setContentsMargins(16, 14, 16, 16)
     vbox.setSpacing(12)
 
-    # Título
     lbl = QLabel(title.upper())
     lbl.setStyleSheet(f"""
         color: {MUTED};
@@ -152,17 +135,12 @@ def make_card(title):
     """)
     vbox.addWidget(lbl)
 
-    # Widget de conteúdo
     content = QWidget()
     content.setStyleSheet("background: transparent;")
     vbox.addWidget(content)
 
     return frame, content
 
-
-# ─────────────────────────────────────────────
-# PARSER WHATSAPP
-# ─────────────────────────────────────────────
 def parsear_mensagem_whatsapp(texto):
     import re
     resultado = {}
@@ -171,31 +149,24 @@ def parsear_mensagem_whatsapp(texto):
         match = re.search(rf"^{chave}\s*:\s*(.+)", texto, re.IGNORECASE | re.MULTILINE)
         return match.group(1).strip() if match else ""
 
-    # FILIAL → empresa
     filial = extrair("FILIAL").upper()
     resultado["empresa"] = "Agrovia" if "AGRO" in filial else "TopBrasil"
 
-    # PAGADOR → Fábrica (primeira palavra)
     pagador = extrair("PAGADOR")
     resultado["Fábrica"] = pagador.upper().split()[0] if pagador else ""
 
-    # CLIENTE
     cliente = extrair("CLIENTE")
     if cliente:
         resultado["Cliente"] = cliente
 
-    # MOTORISTA / PLACA / PESO
     resultado["Motorista"] = extrair("MOTORISTA")
     resultado["Cavalo"]    = extrair("PLACA")
     resultado["Peso"]      = extrair("PESO")
 
-    # FABRICA → Origem
     resultado["Origem"] = extrair("FABRICA")
 
-    # PRODUTO (único para todos os pedidos)
     resultado["Produto"] = extrair("PRODUTO")
 
-    # DESTINO + UF → "Cidade - UF"
     destino_raw = extrair("DESTINO")
     uf = extrair("UF").upper()
     if destino_raw and uf:
@@ -216,26 +187,21 @@ def parsear_mensagem_whatsapp(texto):
     else:
         resultado["Destino"] = resultado["Fazenda"] = ""
 
-    # FAZENDA explícita sobrescreve
     fazenda = extrair("FAZENDA")
     if fazenda:
         resultado["Fazenda"] = fazenda
 
-    # PEDIDOS numerados: PEDIDO 1, PEDIDO 2, etc.
-    # Tenta primeiro o formato numerado
     pedidos = []
     for i in range(1, 5):
         p = extrair(f"PEDIDO {i}")
         if p:
             pedidos.append(p)
 
-    # Fallback: PEDIDO simples (sem número)
     if not pedidos:
         p = extrair("PEDIDO")
         if p:
             pedidos.append(p)
 
-    # Distribui pedidos nos campos
     produto = resultado.get("Produto", "")
     peso    = resultado.get("Peso", "")
 
@@ -245,15 +211,10 @@ def parsear_mensagem_whatsapp(texto):
         resultado[f"Produto{sufixo}"]  = produto
         resultado[f"Peso{sufixo}"]     = peso
 
-    # Guarda quantidade de pedidos para a interface adicionar as linhas
     resultado["_num_pedidos"] = len(pedidos)
 
     return resultado
 
-
-# ─────────────────────────────────────────────
-# THREAD
-# ─────────────────────────────────────────────
 class GeradorThread(QThread):
     sucesso = Signal()
     erro    = Signal(str)
@@ -280,10 +241,6 @@ class GeradorThread(QThread):
                 f.write(traceback.format_exc())
             self.erro.emit(f"Erro inesperado: {e}")
 
-
-# ─────────────────────────────────────────────
-# OVERLAY
-# ─────────────────────────────────────────────
 class LoadingOverlay(QWidget):
     def __init__(self, parent):
         super().__init__(parent)
@@ -320,10 +277,6 @@ class LoadingOverlay(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor(13, 17, 23, 220))
 
-
-# ─────────────────────────────────────────────
-# UI PRINCIPAL
-# ─────────────────────────────────────────────
 class UI(QWidget):
     def __init__(self):
         super().__init__()
@@ -342,7 +295,6 @@ class UI(QWidget):
         self.escolher_empresa()
         self.setar_data_hoje()
 
-    # ── SETUP ──────────────────────────────────
     def _setup_icon(self):
         base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
         ico = base / "icone.ico"
@@ -455,13 +407,11 @@ class UI(QWidget):
             }}
         """)
 
-    # ── BUILD UI ───────────────────────────────
     def _build_ui(self):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ScrollArea envolvendo tudo
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -474,7 +424,6 @@ class UI(QWidget):
         inner.setContentsMargins(16, 16, 16, 16)
         inner.setSpacing(10)
 
-        # ── LINHA 1: Cabeçalho | Motorista ──────
         row1 = QHBoxLayout()
         row1.setSpacing(10)
         row1.setAlignment(Qt.AlignTop)
@@ -488,7 +437,6 @@ class UI(QWidget):
         row1.addWidget(mot, 2)
         inner.addLayout(row1)
 
-        # ── LINHA 2: Carga | Veículo ─────────────
         row2 = QHBoxLayout()
         row2.setSpacing(10)
         row2.setAlignment(Qt.AlignTop)
@@ -502,7 +450,6 @@ class UI(QWidget):
         row2.addWidget(vei, 2)
         inner.addLayout(row2)
 
-        # ── LINHA 3: Assinatura | Botões ─────────
         row3 = QHBoxLayout()
         row3.setSpacing(10)
         row3.setAlignment(Qt.AlignTop)
@@ -524,7 +471,6 @@ class UI(QWidget):
         v.setSpacing(8)
         v.setContentsMargins(0, 0, 0, 0)
 
-        # Linha 1: Data | Fábrica | Solicitante
         r1 = QHBoxLayout(); r1.setSpacing(8)
         self.entradas["Data Apresentação"] = make_date()
         self.entradas["Fábrica"]    = make_input()
@@ -534,7 +480,6 @@ class UI(QWidget):
         r1.addWidget(make_field("Solicitante", self.entradas["Solicitante"]), 2)
         v.addLayout(r1)
 
-        # Linha 2: Origem | Destino | Cliente
         r2 = QHBoxLayout(); r2.setSpacing(8)
         self.entradas["Origem"]  = make_input()
         self.entradas["Destino"] = make_input()
@@ -544,7 +489,6 @@ class UI(QWidget):
         r2.addWidget(make_field("Cliente", self.entradas["Cliente"]), 1)
         v.addLayout(r2)
 
-        # Linha 3: Fazenda (largo)
         self.entradas["Fazenda"] = make_input()
         v.addWidget(make_field("Fazenda", self.entradas["Fazenda"]))
 
@@ -575,7 +519,6 @@ class UI(QWidget):
         v.setSpacing(6)
         v.setContentsMargins(0, 0, 0, 0)
 
-        # Header das colunas
         header = QHBoxLayout(); header.setSpacing(8)
         for txt, stretch in [("Pedido", 3), ("Produto", 3), ("Peso", 1), ("Embalagem", 2)]:
             lbl = QLabel(txt.upper())
@@ -583,7 +526,6 @@ class UI(QWidget):
             header.addWidget(lbl, stretch)
         v.addLayout(header)
 
-        # Container das linhas
         self._carga_container = QWidget()
         self._carga_container.setStyleSheet("background: transparent;")
         self._carga_vbox = QVBoxLayout(self._carga_container)
@@ -591,7 +533,6 @@ class UI(QWidget):
         self._carga_vbox.setContentsMargins(0, 0, 0, 0)
         v.addWidget(self._carga_container)
 
-        # Botão +
         self.btn_add_pedido = QPushButton("＋  ADICIONAR PEDIDO")
         self.btn_add_pedido.setObjectName("btn_add_pedido")
         self.btn_add_pedido.setMinimumHeight(32)
@@ -678,7 +619,6 @@ class UI(QWidget):
 
         return v
 
-    # ── PEDIDOS DINÂMICOS ──────────────────────
     def _adicionar_linha_pedido(self):
         MAX = 4
         if len(self._pedido_linhas) >= MAX:
@@ -717,7 +657,6 @@ class UI(QWidget):
             linha[nome] = inp
             self.entradas[nome] = inp
 
-        # Botão deletar — só aparece a partir da segunda linha
         btn_del = QPushButton("×")
         btn_del.setFixedSize(28, 34)
         btn_del.setStyleSheet(f"""
@@ -747,7 +686,6 @@ class UI(QWidget):
         if len(self._pedido_linhas) >= MAX:
             self.btn_add_pedido.hide()
 
-    # ── FUNDO / RESIZE ─────────────────────────
     def _atualizar_fundo(self, empresa):
         base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
         nomes = {"Agrovia": "logo_agro.png", "TopBrasil": "logo_top.png"}
@@ -772,7 +710,6 @@ class UI(QWidget):
         self._bg_label.setGeometry(self.rect())
         super().resizeEvent(e)
 
-    # ── EMPRESA ────────────────────────────────
     def setar_data_hoje(self):
         self.entradas["Data Apresentação"].setDate(QDate.currentDate())
 
@@ -819,7 +756,6 @@ class UI(QWidget):
         lay.addWidget(btn_t)
         dlg.exec()
 
-    # ── DELETAR PEDIDO ─────────────────────────
     def _deletar_linha_pedido(self, row_w, linha):
         self._pedido_linhas = [(rw, ln) for rw, ln in self._pedido_linhas if rw is not row_w]
         self._carga_vbox.removeWidget(row_w)
@@ -828,7 +764,6 @@ class UI(QWidget):
             self.entradas.pop(chave, None)
         self.btn_add_pedido.show()
 
-        # Renomeia campos para manter sequência correta
         for idx, (rw, ln) in enumerate(self._pedido_linhas):
             novo_sufixo = f" {idx + 1}" if idx > 0 else ""
             nova_linha = {}
@@ -843,7 +778,6 @@ class UI(QWidget):
                 self.entradas[novo_nome] = widget
             self._pedido_linhas[idx] = (rw, nova_linha)
 
-    # ── COLETAR ────────────────────────────────
     def coletar(self):
         dados = {"empresa": self.empresa}
         for k, v in self.entradas.items():
@@ -855,7 +789,6 @@ class UI(QWidget):
                 dados[k] = v.text()
         return dados
 
-    # ── EXECUTAR ───────────────────────────────
     def executar(self, email):
         pasta = QFileDialog.getExistingDirectory(self, "Salvar em")
         if not pasta:
@@ -892,7 +825,6 @@ class UI(QWidget):
         self._thread.erro.connect(self._on_erro)
         self._thread.start()
 
-    # ── DIALOGS ────────────────────────────────
     def _dialog_escolher_conta(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Enviar por Gmail")
@@ -991,7 +923,6 @@ class UI(QWidget):
         dlg.exec()
         return resultado[0]
 
-    # ── SUCESSO / ERRO ─────────────────────────
     def _on_sucesso(self):
         self.overlay.hide()
         for b in [self.btn1, self.btn2, self.btn3]:
@@ -1017,7 +948,6 @@ class UI(QWidget):
             b.setEnabled(True)
         QMessageBox.critical(self, "Erro", mensagem)
 
-    # ── WHATSAPP ───────────────────────────────
     def importar_whatsapp(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Importar WhatsApp")
@@ -1052,12 +982,11 @@ class UI(QWidget):
         dlg.exec()
 
     def _preencher_campos(self, dados):
-        # Adiciona linhas de pedido necessárias
+                                               
         num_pedidos = dados.get("_num_pedidos", 1)
         while len(self._pedido_linhas) < num_pedidos:
             self._adicionar_linha_pedido()
 
-        # Preenche campos simples
         campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
                           "Destino", "Motorista", "Cavalo"]
         for campo in campos_simples:
@@ -1070,7 +999,6 @@ class UI(QWidget):
             elif isinstance(w, QComboBox):
                 w.setEditText(valor)
 
-        # Preenche linhas de pedido
         for idx in range(num_pedidos):
             sufixo = f" {idx + 1}" if idx > 0 else ""
             for chave in ["Pedido", "Produto", "Peso", "Embalagem"]:
@@ -1083,14 +1011,12 @@ class UI(QWidget):
                 elif isinstance(w, QComboBox):
                     w.setEditText(valor)
 
-        # Empresa
         emp = dados.get("empresa")
         if emp:
             self.empresa = emp
             cor = ACCENT if emp == "Agrovia" else DANGER
             self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
 
-    # ── NOVA ORDEM ─────────────────────────────
     def nova_ordem(self):
         for v in self.entradas.values():
             if isinstance(v, QLineEdit):
@@ -1100,7 +1026,6 @@ class UI(QWidget):
             elif isinstance(v, QDateEdit):
                 v.setDate(QDate.currentDate())
 
-        # Remove linhas extras de pedido
         while len(self._pedido_linhas) > 1:
             row_w, linha = self._pedido_linhas.pop()
             self._carga_vbox.removeWidget(row_w)
@@ -1111,7 +1036,6 @@ class UI(QWidget):
         self.btn_add_pedido.show()
         self.escolher_empresa()
         self.setar_data_hoje()
-
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
