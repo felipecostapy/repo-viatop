@@ -30,6 +30,7 @@ def _autenticar_gmail(conta):
     SCOPES = [
         "https://www.googleapis.com/auth/gmail.send",
         "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/spreadsheets",
         "openid",
     ]
     token_path = os.path.join(TOKENS_DIR, f"token_{conta}.json")
@@ -99,6 +100,7 @@ def adicionar_conta_gmail():
     SCOPES = [
         "https://www.googleapis.com/auth/gmail.send",
         "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/spreadsheets",
         "openid",
     ]
 

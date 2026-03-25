@@ -82,7 +82,7 @@
  [],
  False,
  False,
- 1774437175,
+ 1774442087,
  [('runw.exe',
    'C:\\Users\\trans\\Documents\\GitHub\\repo-viatop\\venv\\Lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\runw.exe',
    'EXECUTABLE')],

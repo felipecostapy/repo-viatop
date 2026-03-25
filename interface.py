@@ -6,6 +6,7 @@ from PySide6.QtCore import Qt, QDate, QThread, Signal, QTimer, QPropertyAnimatio
 from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon, QPalette
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
+from planilha import carregar_blocos
 
 BG       = "#0d1117"
 SURFACE  = "#161b22"
@@ -322,6 +323,186 @@ class HistoricoWidget(QWidget):
                 subprocess.run(["explorer", "/select,", caminho])
             except Exception:
                 pass
+
+
+class PlanilhaWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent;")
+        self._conta = None
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+
+        topo = QHBoxLayout()
+        titulo = QLabel("CONTROLE DE PEDIDOS")
+        titulo.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px; background: transparent;")
+
+        self._combo_conta = QComboBox()
+        self._combo_conta.setFixedWidth(220)
+        self._combo_conta.setStyleSheet(f"""
+            QComboBox {{
+                background: {SURFACE}; border: 1px solid {BORDER2};
+                border-radius: 6px; padding: 6px 10px; color: {TEXT}; font-size: 12px;
+            }}
+        """)
+
+        btn_carregar = QPushButton("↺  CARREGAR")
+        btn_carregar.setStyleSheet(f"""
+            QPushButton {{
+                background: {ACCENT}; color: white; border: none;
+                border-radius: 6px; padding: 7px 14px; font-weight: 700; font-size: 12px;
+            }}
+            QPushButton:hover {{ background: {ACCENT_H}; }}
+        """)
+        btn_carregar.clicked.connect(self._carregar)
+
+        topo.addWidget(titulo)
+        topo.addStretch()
+        topo.addWidget(self._combo_conta)
+        topo.addWidget(btn_carregar)
+        root.addLayout(topo)
+
+        self._lbl_status = QLabel("")
+        self._lbl_status.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        root.addWidget(self._lbl_status)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        self._container = QWidget()
+        self._container.setStyleSheet("background: transparent;")
+        self._grid = QGridLayout(self._container)
+        self._grid.setSpacing(10)
+        self._grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+
+        scroll.setWidget(self._container)
+        root.addWidget(scroll)
+
+        self._atualizar_contas()
+
+    def _atualizar_contas(self):
+        self._combo_conta.clear()
+        contas = _listar_contas_gmail()
+        if contas:
+            self._combo_conta.addItems(contas)
+        else:
+            self._combo_conta.addItem("(nenhuma conta)")
+
+    def _carregar(self):
+        conta = self._combo_conta.currentText()
+        if conta == "(nenhuma conta)":
+            self._lbl_status.setText("Configure uma conta Gmail primeiro.")
+            return
+
+        self._lbl_status.setText("Carregando...")
+        QApplication.processEvents()
+
+        try:
+            blocos = carregar_blocos(conta)
+            self._renderizar(blocos)
+            self._lbl_status.setText(f"{len(blocos)} pedido(s) encontrado(s)")
+        except Exception as e:
+            self._lbl_status.setText(f"Erro: {e}")
+
+    def _renderizar(self, blocos):
+        while self._grid.count():
+            item = self._grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        COLS = 3
+        for i, b in enumerate(blocos):
+            card = self._make_bloco_card(b)
+            self._grid.addWidget(card, i // COLS, i % COLS)
+
+    def _make_bloco_card(self, b):
+        frame = QFrame()
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {SURFACE};
+                border: 1px solid {BORDER};
+                border-radius: 10px;
+            }}
+        """)
+        frame.setMinimumWidth(280)
+
+        v = QVBoxLayout(frame)
+        v.setContentsMargins(14, 12, 14, 12)
+        v.setSpacing(8)
+
+        saldo   = b["saldo_restante"]
+        total   = b["saldo_total"]
+        pct     = (saldo / total * 100) if total > 0 else 0
+        cor_saldo = ACCENT if pct > 30 else "#e3b341" if pct > 10 else DANGER
+
+        top = QHBoxLayout()
+        lbl_dest = QLabel(b["destino"].upper())
+        lbl_dest.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700; background: transparent;")
+        lbl_saldo = QLabel(f"{saldo:.0f} t")
+        lbl_saldo.setStyleSheet(f"""
+            color: {cor_saldo};
+            background: {cor_saldo}18;
+            border: 1px solid {cor_saldo}44;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 2px 8px;
+        """)
+        top.addWidget(lbl_dest, 1)
+        top.addWidget(lbl_saldo)
+        v.addLayout(top)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"background: {BORDER}; border: none; max-height: 1px;")
+        v.addWidget(sep)
+
+        def info_row(label, valor):
+            h = QHBoxLayout()
+            l = QLabel(label)
+            l.setStyleSheet(f"color: {MUTED}; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; background: transparent;")
+            r = QLabel(str(valor))
+            r.setStyleSheet(f"color: {TEXT}; font-size: 12px; background: transparent;")
+            r.setWordWrap(True)
+            h.addWidget(l, 1)
+            h.addWidget(r, 2)
+            return h
+
+        v.addLayout(info_row("CLIENTE", b["cliente"]))
+        v.addLayout(info_row("FÁBRICA", b["fabrica"]))
+        v.addLayout(info_row("PEDIDO",  b["pedido"]))
+        v.addLayout(info_row("PRODUTO", b["produto"]))
+
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.HLine)
+        sep2.setStyleSheet(f"background: {BORDER}; border: none; max-height: 1px;")
+        v.addWidget(sep2)
+
+        bar_bg = QFrame()
+        bar_bg.setFixedHeight(6)
+        bar_bg.setStyleSheet(f"background: {BORDER2}; border-radius: 3px;")
+        bar_fill = QFrame(bar_bg)
+        bar_fill.setFixedHeight(6)
+        fill_w = max(4, int(pct / 100 * 260))
+        bar_fill.setFixedWidth(fill_w)
+        bar_fill.setStyleSheet(f"background: {cor_saldo}; border-radius: 3px;")
+        v.addWidget(bar_bg)
+
+        rodape = QHBoxLayout()
+        lbl_total = QLabel(f"Total: {total:.0f} t")
+        lbl_total.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        lbl_carregado = QLabel(f"Carregado: {b['total_carregado']:.0f} t")
+        lbl_carregado.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        rodape.addWidget(lbl_total)
+        rodape.addStretch()
+        rodape.addWidget(lbl_carregado)
+        v.addLayout(rodape)
+
+        return frame
 
 
 def parsear_mensagem_whatsapp(texto):
@@ -655,6 +836,7 @@ class UI(QWidget):
         self._nav_btns = []
         self._nav_btns.append(make_nav_btn("📋", "Gerar Ordem", 0))
         self._nav_btns.append(make_nav_btn("🕐", "Histórico", 1))
+        self._nav_btns.append(make_nav_btn("📊", "Planilha", 2))
         self._nav_btns[0].setChecked(True)
 
         for b in self._nav_btns:
@@ -670,6 +852,8 @@ class UI(QWidget):
         self._stack.addWidget(self._build_pagina_ordem())
         self._historico_widget = HistoricoWidget()
         self._stack.addWidget(self._historico_widget)
+        self._planilha_widget = PlanilhaWidget()
+        self._stack.addWidget(self._planilha_widget)
 
         root.addWidget(self._stack, 1)
 
@@ -679,6 +863,8 @@ class UI(QWidget):
             b.setChecked(i == idx)
         if idx == 1:
             self._historico_widget.recarregar()
+        if idx == 2:
+            self._planilha_widget._atualizar_contas()
 
     def _build_pagina_ordem(self):
         pagina = QWidget()
