@@ -1,5 +1,6 @@
 import os
 import time
+import win32com.client
 
 CREDENTIALS_FILE = "credentials.json"
 TOKENS_DIR = "gmail_tokens"
@@ -354,22 +355,19 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
                 app.quit()
                 app = None
 
-                import subprocess
-                excel_exe = _encontrar_excel()
-                if excel_exe:
-                    subprocess.run([excel_exe, "/x", caminho], timeout=30)
-                    time.sleep(3)
+                time.sleep(2)
 
-                app2 = xw.App(visible=False)
-                app2.api.Visible = False
-                app2.api.ScreenUpdating = False
-                app2.api.DisplayAlerts = False
-                wb2 = xw.Book(caminho)
+                import win32com.client as _win32
+                xl = _win32.Dispatch("Excel.Application")
+                xl.Visible = False
+                xl.DisplayAlerts = False
+                xl.ScreenUpdating = False
+                wb2 = xl.Workbooks.Open(os.path.abspath(caminho))
                 try:
-                    wb2.api.ExportAsFixedFormat(0, pdf_path)
+                    wb2.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
                 finally:
-                    wb2.close()
-                    app2.quit()
+                    wb2.Close(False)
+                    xl.Quit()
 
             except Exception as e_fallback:
                 raise Exception(
