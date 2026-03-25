@@ -141,6 +141,173 @@ def make_card(title):
 
     return frame, content
 
+import json
+import datetime
+
+def _historico_path():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent / "historico.json"
+    return Path(__file__).parent / "historico.json"
+
+def salvar_historico(dados, caminho_arquivo):
+    path = _historico_path()
+    try:
+        historico = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    except Exception:
+        historico = []
+
+    registro = {
+        "data_hora": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "motorista": dados.get("Motorista", ""),
+        "placa":     dados.get("Cavalo", ""),
+        "arquivo":   caminho_arquivo,
+    }
+    historico.insert(0, registro)
+    path.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def carregar_historico():
+    path = _historico_path()
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+class HistoricoWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent;")
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+
+        topo = QHBoxLayout()
+        titulo = QLabel("HISTÓRICO DE ORDENS")
+        titulo.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px; background: transparent;")
+        btn_atualizar = QPushButton("↺  ATUALIZAR")
+        btn_atualizar.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {BORDER2};
+                border-radius: 6px;
+                color: {MUTED};
+                padding: 6px 12px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{ color: {TEXT}; border-color: {ACCENT}; }}
+        """)
+        btn_atualizar.clicked.connect(self.recarregar)
+        topo.addWidget(titulo)
+        topo.addStretch()
+        topo.addWidget(btn_atualizar)
+        root.addLayout(topo)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        self._container = QWidget()
+        self._container.setStyleSheet("background: transparent;")
+        self._vbox = QVBoxLayout(self._container)
+        self._vbox.setSpacing(8)
+        self._vbox.setContentsMargins(0, 0, 0, 0)
+        self._vbox.addStretch()
+
+        scroll.setWidget(self._container)
+        root.addWidget(scroll)
+
+        self.recarregar()
+
+    def recarregar(self):
+        while self._vbox.count() > 1:
+            item = self._vbox.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        registros = carregar_historico()
+
+        if not registros:
+            vazio = QLabel("Nenhuma ordem gerada ainda.")
+            vazio.setAlignment(Qt.AlignCenter)
+            vazio.setStyleSheet(f"color: {MUTED}; font-size: 13px; background: transparent;")
+            self._vbox.insertWidget(0, vazio)
+            return
+
+        grupos = {}
+        for r in registros:
+            data = r.get("data_hora", "")[:10]
+            grupos.setdefault(data, []).append(r)
+
+        for i, (data, items) in enumerate(grupos.items()):
+            lbl_data = QLabel(data)
+            lbl_data.setStyleSheet(f"color: {MUTED}; font-size: 11px; font-weight: 700; letter-spacing: 1px; background: transparent; padding-top: 4px;")
+            self._vbox.insertWidget(self._vbox.count() - 1, lbl_data)
+
+            for r in items:
+                card = self._make_card(r)
+                self._vbox.insertWidget(self._vbox.count() - 1, card)
+
+    def _make_card(self, r):
+        frame = QFrame()
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {SURFACE};
+                border: 1px solid {BORDER};
+                border-radius: 8px;
+            }}
+        """)
+        h = QHBoxLayout(frame)
+        h.setContentsMargins(14, 10, 14, 10)
+        h.setSpacing(12)
+
+        hora = r.get("data_hora", "")[-5:]
+        lbl_hora = QLabel(hora)
+        lbl_hora.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent; min-width: 40px;")
+
+        info = QVBoxLayout()
+        info.setSpacing(2)
+        motorista = QLabel(r.get("motorista", "—").title())
+        motorista.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 600; background: transparent;")
+        placa = QLabel(r.get("placa", "—"))
+        placa.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        info.addWidget(motorista)
+        info.addWidget(placa)
+
+        arquivo = r.get("arquivo", "")
+        btn_abrir = QPushButton("📄")
+        btn_abrir.setToolTip(arquivo)
+        btn_abrir.setFixedSize(32, 32)
+        btn_abrir.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid {BORDER2};
+                border-radius: 6px;
+                color: {MUTED};
+                font-size: 14px;
+            }}
+            QPushButton:hover {{ border-color: {ACCENT}; color: {ACCENT}; }}
+        """)
+        btn_abrir.clicked.connect(lambda _, a=arquivo: self._abrir_arquivo(a))
+
+        h.addWidget(lbl_hora)
+        h.addLayout(info, 1)
+        h.addWidget(btn_abrir)
+        return frame
+
+    def _abrir_arquivo(self, caminho):
+        import subprocess
+        try:
+            os.startfile(caminho)
+        except Exception:
+            try:
+                subprocess.run(["explorer", "/select,", caminho])
+            except Exception:
+                pass
+
+
 def parsear_mensagem_whatsapp(texto):
     import re
     resultado = {}
@@ -241,7 +408,7 @@ def parsear_mensagem_whatsapp(texto):
     return resultado
 
 class GeradorThread(QThread):
-    sucesso = Signal()
+    sucesso = Signal(str)
     erro    = Signal(str)
 
     def __init__(self, dados, pasta, email, conta_gmail=None):
@@ -253,8 +420,8 @@ class GeradorThread(QThread):
 
     def run(self):
         try:
-            gerar_ordem(self.dados, self.pasta, self.email, self.conta_gmail)
-            self.sucesso.emit()
+            caminho = gerar_ordem(self.dados, self.pasta, self.email, self.conta_gmail)
+            self.sucesso.emit(caminho)
         except Exception as e:
             import traceback
             with open("erro_log.txt", "w") as f:
@@ -433,7 +600,74 @@ class UI(QWidget):
         """)
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+
+        # ── SIDEBAR ──────────────────────────────
+        sidebar = QWidget()
+        sidebar.setFixedWidth(56)
+        sidebar.setStyleSheet(f"background-color: {SURFACE}; border-right: 1px solid {BORDER};")
+        sb_lay = QVBoxLayout(sidebar)
+        sb_lay.setContentsMargins(0, 16, 0, 16)
+        sb_lay.setSpacing(4)
+
+        def make_nav_btn(icon, tooltip, idx):
+            btn = QPushButton(icon)
+            btn.setToolTip(tooltip)
+            btn.setFixedSize(56, 48)
+            btn.setCheckable(True)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    border: none;
+                    border-left: 3px solid transparent;
+                    color: {MUTED};
+                    font-size: 18px;
+                    border-radius: 0;
+                }}
+                QPushButton:hover {{ color: {TEXT}; background: {BORDER}22; }}
+                QPushButton:checked {{
+                    color: {ACCENT};
+                    border-left: 3px solid {ACCENT};
+                    background: {ACCENT}18;
+                }}
+            """)
+            btn.clicked.connect(lambda _, i=idx: self._nav(i))
+            return btn
+
+        self._nav_btns = []
+        self._nav_btns.append(make_nav_btn("📋", "Gerar Ordem", 0))
+        self._nav_btns.append(make_nav_btn("🕐", "Histórico", 1))
+        self._nav_btns[0].setChecked(True)
+
+        for b in self._nav_btns:
+            sb_lay.addWidget(b)
+        sb_lay.addStretch()
+
+        root.addWidget(sidebar)
+
+        # ── STACKED ───────────────────────────────
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet("background: transparent;")
+
+        self._stack.addWidget(self._build_pagina_ordem())
+        self._historico_widget = HistoricoWidget()
+        self._stack.addWidget(self._historico_widget)
+
+        root.addWidget(self._stack, 1)
+
+    def _nav(self, idx):
+        self._stack.setCurrentIndex(idx)
+        for i, b in enumerate(self._nav_btns):
+            b.setChecked(i == idx)
+        if idx == 1:
+            self._historico_widget.recarregar()
+
+    def _build_pagina_ordem(self):
+        pagina = QWidget()
+        pagina.setStyleSheet("background: transparent;")
+        root = QVBoxLayout(pagina)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
@@ -489,6 +723,7 @@ class UI(QWidget):
 
         scroll.setWidget(container)
         root.addWidget(scroll)
+        return pagina
 
     def _build_cabecalho(self):
         frame, content = make_card("Cabeçalho")
@@ -948,10 +1183,12 @@ class UI(QWidget):
         dlg.exec()
         return resultado[0]
 
-    def _on_sucesso(self):
+    def _on_sucesso(self, caminho):
         self.overlay.hide()
         for b in [self.btn1, self.btn2, self.btn3]:
             b.setEnabled(True)
+
+        salvar_historico(self._thread.dados, caminho)
 
         msg = QMessageBox(self)
         msg.setWindowTitle("Sucesso")
