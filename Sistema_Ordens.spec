@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = [('logo_agro.png', '.'), ('logo_top.png', '.'), ('icone.ico', '.')]
 binaries = []
-hiddenimports = []
+hiddenimports = ['win32com.client', 'win32com.server', 'win32api', 'win32con']
 tmp_ret = collect_all('PySide6')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 

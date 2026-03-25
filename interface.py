@@ -152,8 +152,16 @@ def parsear_mensagem_whatsapp(texto):
     filial = extrair("FILIAL").upper()
     resultado["empresa"] = "Agrovia" if "AGRO" in filial else "TopBrasil"
 
+    # PAGADOR → Solicitante
     pagador = extrair("PAGADOR")
-    resultado["Fábrica"] = pagador.upper().split()[0] if pagador else ""
+    if pagador:
+        resultado["Solicitante"] = pagador
+
+    # FABRICA → Fábrica (nome) e Origem
+    fabrica = extrair("FABRICA")
+    if fabrica:
+        resultado["Fábrica"] = fabrica.upper().split()[0]
+        resultado["Origem"]  = fabrica
 
     cliente = extrair("CLIENTE")
     if cliente:
@@ -163,9 +171,26 @@ def parsear_mensagem_whatsapp(texto):
     resultado["Cavalo"]    = extrair("PLACA")
     resultado["Peso"]      = extrair("PESO")
 
-    resultado["Origem"] = extrair("FABRICA")
+    produto = extrair("PRODUTO")
+    resultado["Produto"] = produto
 
-    resultado["Produto"] = extrair("PRODUTO")
+    # Detecta embalagem no texto do produto
+    embalagem = ""
+    prod_upper = produto.upper()
+    if "BIG BAG" in prod_upper:
+        embalagem = "BIG BAG"
+    elif "GRANEL" in prod_upper:
+        embalagem = "GRANEL"
+    elif "PALETIZADO" in prod_upper:
+        embalagem = "PALETIZADO"
+    elif "SACO 50" in prod_upper:
+        embalagem = "SACO 50KG"
+    elif "SACO 25" in prod_upper:
+        embalagem = "SACO 25KG"
+    elif "SACO 40" in prod_upper:
+        embalagem = "SACO 40KG"
+    if embalagem:
+        resultado["Embalagem"] = embalagem
 
     destino_raw = extrair("DESTINO")
     uf = extrair("UF").upper()
@@ -988,7 +1013,7 @@ class UI(QWidget):
             self._adicionar_linha_pedido()
 
         campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
-                          "Destino", "Motorista", "Cavalo"]
+                          "Destino", "Motorista", "Cavalo", "Solicitante"]
         for campo in campos_simples:
             valor = dados.get(campo, "")
             if not valor:
@@ -1002,7 +1027,8 @@ class UI(QWidget):
         for idx in range(num_pedidos):
             sufixo = f" {idx + 1}" if idx > 0 else ""
             for chave in ["Pedido", "Produto", "Peso", "Embalagem"]:
-                valor = dados.get(f"{chave}{sufixo}", "")
+                # Embalagem detectada do produto (sem sufixo) aplica em todas as linhas
+                valor = dados.get(f"{chave}{sufixo}", "") or (dados.get("Embalagem", "") if chave == "Embalagem" else "")
                 if not valor:
                     continue
                 w = self.entradas.get(f"{chave}{sufixo}")
