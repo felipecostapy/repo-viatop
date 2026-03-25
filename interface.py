@@ -160,6 +160,7 @@ def salvar_historico(dados, caminho_arquivo):
         "data_hora": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
         "motorista": dados.get("Motorista", ""),
         "placa":     dados.get("Cavalo", ""),
+        "empresa":   dados.get("empresa", ""),
         "arquivo":   caminho_arquivo,
     }
     historico.insert(0, registro)
@@ -276,6 +277,20 @@ class HistoricoWidget(QWidget):
         info.addWidget(motorista)
         info.addWidget(placa)
 
+        empresa = r.get("empresa", "")
+        badge = QLabel(empresa.upper() if empresa else "—")
+        cor_badge = ACCENT if empresa == "Agrovia" else DANGER if empresa == "TopBrasil" else MUTED
+        badge.setStyleSheet(f"""
+            color: {cor_badge};
+            background: {cor_badge}18;
+            border: 1px solid {cor_badge}44;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 7px;
+            letter-spacing: 0.5px;
+        """)
+
         arquivo = r.get("arquivo", "")
         btn_abrir = QPushButton("📄")
         btn_abrir.setToolTip(arquivo)
@@ -294,6 +309,7 @@ class HistoricoWidget(QWidget):
 
         h.addWidget(lbl_hora)
         h.addLayout(info, 1)
+        h.addWidget(badge)
         h.addWidget(btn_abrir)
         return frame
 
