@@ -1,12 +1,16 @@
 import os
 from pathlib import Path
 
-SPREADSHEET_ID   = "1gQCZjGW0nWJcRBMj9hajCQgocBN1QZxQ2Oxotmh-dmA"
-ABA              = "Pagina01"
+SPREADSHEET_ID   = "16WPNHpjECjcPN5F_PcV3jbXr0OUzkBlbMxn_1p7QXio"
+ABA              = "Página01"
 TOKENS_DIR       = "gmail_tokens"
 CREDENTIALS_FILE = "credentials.json"
 COL_STARTS       = [0, 7, 14]
 COL_WIDTH        = 6
+
+# Nova planilha de dados (tabela plana)
+DADOS_ID  = "1Uh_CFR2C3YypSIVQhGuekRTk_Lvy7I-0G5aFzIr39As"
+DADOS_ABA = "DADOS"
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
@@ -143,6 +147,86 @@ def carregar_blocos(conta):
     return blocos
 
 
+def carregar_blocos_dados(conta):
+    service = _autenticar(conta)
+    sheet   = service.spreadsheets()
+
+    resp = sheet.values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'",
+        valueRenderOption="FORMATTED_VALUE",
+    ).execute()
+
+    valores = resp.get("values", [])
+    if not valores:
+        return []
+
+    pedidos = {}
+    ordem   = []
+
+    for i, linha in enumerate(valores[1:], 2):
+        while len(linha) < 11:
+            linha.append("")
+
+        destino = str(linha[0]).strip()
+        cliente = str(linha[1]).strip()
+        pedido  = str(linha[2]).strip()
+        produto = str(linha[3]).strip()
+
+        if not any([destino, cliente, pedido]):
+            continue
+
+        key = f"{cliente}||{pedido}||{produto}"
+
+        if key not in pedidos:
+            try:
+                saldo_total = float(str(linha[4]).replace(",", "."))
+            except Exception:
+                saldo_total = 0
+            pedidos[key] = {
+                "destino":         destino,
+                "cliente":         cliente,
+                "cidade":          destino,
+                "fazenda":         "",
+                "fabrica":         "",
+                "pedido":          pedido,
+                "produto":         produto,
+                "saldo_total":     saldo_total,
+                "total_carregado": 0,
+                "saldo_restante":  saldo_total,
+                "linhas":          [],
+                "col":             None,
+                "linha_total":     None,
+            }
+            ordem.append(key)
+
+        data   = str(linha[5]).strip()
+        nota   = str(linha[6]).strip()
+        placa  = str(linha[7]).strip()
+        peso   = str(linha[8]).strip()
+        frete  = str(linha[9]).strip()
+        status = str(linha[10]).strip()
+
+        if any([data, nota, placa, peso]):
+            pedidos[key]["linhas"].append({
+                "data": data, "nota": nota, "placa": placa,
+                "peso": peso, "frete": frete, "status": status,
+            })
+
+    for key in ordem:
+        b = pedidos[key]
+        try:
+            b["total_carregado"] = sum(
+                float(str(l["peso"]).replace(",", "."))
+                for l in b["linhas"] if l["peso"]
+            )
+            b["saldo_restante"] = b["saldo_total"] - b["total_carregado"]
+        except Exception:
+            pass
+
+    return [pedidos[k] for k in ordem]
+
+
 def _col_letra(n):
     resultado = ""
     while n > 0:
@@ -202,3 +286,223 @@ def _get_sheet_id(service):
         if s["properties"]["title"] == ABA:
             return s["properties"]["sheetId"]
     raise Exception(f"Aba '{ABA}' não encontrada.")
+
+
+BASE_ID  = "1WTtmpcCZ1xSJu3vW2xfPu8sP49T93jju"
+BASE_ABA = "BASE"
+
+def carregar_base(conta):
+    service = _autenticar(conta)
+    sheet   = service.spreadsheets()
+
+    resp = sheet.values().get(
+        spreadsheetId=BASE_ID,
+        range=f"'{BASE_ABA}'",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+
+    valores = resp.get("values", [])
+    if not valores:
+        return []
+
+    dados = []
+    for i, linha in enumerate(valores[1:], 2):
+        while len(linha) < 12:
+            linha.append("")
+        row = list(linha[:12]) + [i]  # índice 12 = número da linha na planilha
+        dados.append(row)
+
+    return dados
+
+
+def carregar_base_com_linhas(conta):
+    service = _autenticar(conta)
+    sheet   = service.spreadsheets()
+
+    resp = sheet.values().get(
+        spreadsheetId=BASE_ID,
+        range=f"'{BASE_ABA}'",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+
+    valores = resp.get("values", [])
+    resultado = []
+    for i, linha in enumerate(valores[1:], 2):
+        while len(linha) < 12:
+            linha.append("")
+        resultado.append((i, linha[:12]))
+    return resultado
+
+
+def atualizar_linha_base(conta, num_linha, novos_dados):
+    service = _autenticar(conta)
+    sheet   = service.spreadsheets()
+
+    col_fim = chr(64 + len(novos_dados)) if len(novos_dados) <= 26 else "L"
+    rng = f"'{BASE_ABA}'!A{num_linha}:{col_fim}{num_linha}"
+
+    sheet.values().update(
+        spreadsheetId=BASE_ID,
+        range=rng,
+        valueInputOption="USER_ENTERED",
+        body={"values": [novos_dados]},
+    ).execute()
+
+
+def deletar_linha_base(conta, num_linha):
+    service = _autenticar(conta)
+    sheet   = service.spreadsheets()
+
+    meta = service.spreadsheets().get(spreadsheetId=BASE_ID).execute()
+    sheet_id = None
+    for s in meta["sheets"]:
+        if s["properties"]["title"] == BASE_ABA:
+            sheet_id = s["properties"]["sheetId"]
+            break
+
+    if sheet_id is None:
+        raise Exception(f"Aba '{BASE_ABA}' não encontrada.")
+
+    sheet.batchUpdate(
+        spreadsheetId=BASE_ID,
+        body={
+            "requests": [{
+                "deleteDimension": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": num_linha - 1,
+                        "endIndex": num_linha,
+                    }
+                }
+            }]
+        }
+    ).execute()
+
+
+def _get_dados_sheet_id(service):
+    meta = service.spreadsheets().get(spreadsheetId=DADOS_ID).execute()
+    for s in meta["sheets"]:
+        if s["properties"]["title"] == DADOS_ABA:
+            return s["properties"]["sheetId"]
+    raise Exception(f"Aba '{DADOS_ABA}' não encontrada.")
+
+
+def _ultima_linha_dados(service):
+    resp = service.spreadsheets().values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'!A:A",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+    valores = resp.get("values", [])
+    # Encontra última linha com conteúdo
+    ultima = len(valores)
+    # Retorna índice 0-based para inserir APÓS a última linha com dado
+    return ultima
+
+
+def _inserir_linha_dados(service, sheet_id, linha_idx, valores):
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=DADOS_ID,
+        body={"requests": [{
+            "insertDimension": {
+                "range": {
+                    "sheetId":    sheet_id,
+                    "dimension":  "ROWS",
+                    "startIndex": linha_idx,
+                    "endIndex":   linha_idx + 1,
+                },
+                "inheritFromBefore": True,
+            }
+        }]}
+    ).execute()
+
+    col_fim = _col_letra(len(valores))
+    rng = f"'{DADOS_ABA}'!A{linha_idx + 1}:{col_fim}{linha_idx + 1}"
+    service.spreadsheets().values().update(
+        spreadsheetId=DADOS_ID,
+        range=rng,
+        valueInputOption="USER_ENTERED",
+        body={"values": [valores]},
+    ).execute()
+
+
+def criar_pedido_dados(conta, destino, cliente, pedido, produto, saldo_total):
+    service  = _autenticar(conta)
+    sheet_id = _get_dados_sheet_id(service)
+    ultima   = _ultima_linha_dados(service)
+
+    valores = [destino, cliente, pedido, produto, saldo_total,
+               "", "", "", "", "", "NÃO CARREGADO"]
+    _inserir_linha_dados(service, sheet_id, ultima, valores)
+
+
+def gravar_carregamento_dados(conta, destino, cliente, pedido, produto,
+                               data, placa, peso, frete, status):
+    service  = _autenticar(conta)
+    sheet_id = _get_dados_sheet_id(service)
+    ultima   = _ultima_linha_dados(service)
+
+    try:
+        saldo_total = _buscar_saldo_total_dados(service, pedido)
+    except Exception:
+        saldo_total = ""
+
+    valores = [destino, cliente, pedido, produto, saldo_total,
+               data, "", placa, peso, frete, status]
+    _inserir_linha_dados(service, sheet_id, ultima, valores)
+
+
+def _buscar_saldo_total_dados(service, pedido):
+    resp = service.spreadsheets().values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'!A:E",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+    for linha in resp.get("values", [])[1:]:
+        if len(linha) > 2 and str(linha[2]).strip() == str(pedido).strip():
+            try:
+                return float(str(linha[4]).replace(",", "."))
+            except Exception:
+                return ""
+    return ""
+
+
+def atualizar_saldo_dados(conta, cliente, pedido, produto, novo_saldo):
+    service = _autenticar(conta)
+    sheet   = service.spreadsheets()
+
+    resp = sheet.values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'!A:E",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+
+    valores = resp.get("values", [])
+    linhas_atualizar = []
+
+    for i, linha in enumerate(valores[1:], 2):
+        if len(linha) < 3:
+            continue
+        if (str(linha[1]).strip().upper() == str(cliente).strip().upper() and
+            str(linha[2]).strip() == str(pedido).strip() and
+            str(linha[3]).strip().upper() == str(produto).strip().upper() if len(linha) > 3 else True):
+            linhas_atualizar.append(i)
+
+    if not linhas_atualizar:
+        raise Exception(f"Pedido {pedido} do cliente {cliente} não encontrado.")
+
+    requests = []
+    for num_linha in linhas_atualizar:
+        requests.append({
+            "range": f"'{DADOS_ABA}'!E{num_linha}",
+            "values": [[novo_saldo]],
+        })
+
+    sheet.values().batchUpdate(
+        spreadsheetId=DADOS_ID,
+        body={
+            "valueInputOption": "USER_ENTERED",
+            "data": requests,
+        }
+    ).execute()

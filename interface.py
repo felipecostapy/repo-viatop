@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QDate, QThread, Signal, QTimer, QPropertyAnimatio
 from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon, QPalette
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
-from planilha import carregar_blocos, gravar_carregamento
+from planilha import carregar_blocos, carregar_blocos_dados, gravar_carregamento, carregar_base
 
 BG       = "#0d1117"
 SURFACE  = "#161b22"
@@ -253,11 +253,13 @@ class HistoricoWidget(QWidget):
                 self._vbox.insertWidget(self._vbox.count() - 1, card)
 
     def _make_card(self, r):
+        empresa = r.get("empresa", "")
+        cor_borda = ACCENT if empresa == "Agrovia" else DANGER if empresa == "TopBrasil" else BORDER
         frame = QFrame()
         frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {SURFACE};
-                border: 1px solid {BORDER};
+                border: 1px solid {cor_borda};
                 border-radius: 8px;
             }}
         """)
@@ -293,25 +295,29 @@ class HistoricoWidget(QWidget):
         """)
 
         arquivo = r.get("arquivo", "")
-        btn_abrir = QPushButton("📄")
-        btn_abrir.setToolTip(arquivo)
-        btn_abrir.setFixedSize(32, 32)
-        btn_abrir.setStyleSheet(f"""
+        arquivo_xlsx = arquivo if arquivo.endswith(".xlsx") else arquivo.replace(".pdf", ".xlsx")
+
+        btn_editar = QPushButton("EDITAR")
+        btn_editar.setToolTip(f"Abrir: {arquivo_xlsx}")
+        btn_editar.setFixedHeight(28)
+        btn_editar.setFont(QFont("Arial", 8, QFont.Bold))
+        btn_editar.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
                 border: 1px solid {BORDER2};
                 border-radius: 6px;
                 color: {MUTED};
-                font-size: 14px;
+                font-size: 9px;
+                padding: 0px 8px;
             }}
             QPushButton:hover {{ border-color: {ACCENT}; color: {ACCENT}; }}
         """)
-        btn_abrir.clicked.connect(lambda _, a=arquivo: self._abrir_arquivo(a))
+        btn_editar.clicked.connect(lambda _, a=arquivo_xlsx: self._abrir_arquivo(a))
 
         h.addWidget(lbl_hora)
         h.addLayout(info, 1)
         h.addWidget(badge)
-        h.addWidget(btn_abrir)
+        h.addWidget(btn_editar)
         return frame
 
     def _abrir_arquivo(self, caminho):
@@ -358,11 +364,35 @@ class PlanilhaWidget(QWidget):
         """)
         btn_carregar.clicked.connect(self._carregar)
 
+        btn_novo = QPushButton("+  NOVO PEDIDO")
+        btn_novo.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {ACCENT}; border: 1px solid {ACCENT};
+                border-radius: 6px; padding: 7px 14px; font-weight: 700; font-size: 12px;
+            }}
+            QPushButton:hover {{ background: {ACCENT}18; }}
+        """)
+        btn_novo.clicked.connect(self._novo_pedido)
+
         topo.addWidget(titulo)
         topo.addStretch()
         topo.addWidget(self._combo_conta)
+        topo.addWidget(btn_novo)
         topo.addWidget(btn_carregar)
         root.addLayout(topo)
+
+        # Busca
+        self._inp_busca_pedidos = QLineEdit()
+        self._inp_busca_pedidos.setPlaceholderText("Buscar por cliente, pedido, produto, destino...")
+        self._inp_busca_pedidos.setStyleSheet(f"""
+            QLineEdit {{
+                background: {SURFACE}; border: 1px solid {BORDER2};
+                border-radius: 6px; padding: 6px 12px; color: {TEXT}; font-size: 12px;
+            }}
+            QLineEdit:focus {{ border-color: {ACCENT}; }}
+        """)
+        self._inp_busca_pedidos.textChanged.connect(self._filtrar_pedidos)
+        root.addWidget(self._inp_busca_pedidos)
 
         self._lbl_status = QLabel("")
         self._lbl_status.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
@@ -386,6 +416,151 @@ class PlanilhaWidget(QWidget):
         self._expand_btns = []
         self._atualizar_contas()
 
+    def _ajustar_saldo(self, bloco):
+        conta = self._combo_conta.currentText()
+        if conta == "(nenhuma conta)":
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Ajustar Saldo")
+        dlg.setFixedSize(360, 240)
+        dlg.setStyleSheet(DIALOG_SS)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(12)
+
+        info = QLabel(f"{bloco['cliente']} — Pedido {bloco['pedido']}\nSaldo atual: {bloco['saldo_total']:.0f} t")
+        info.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 600; background: transparent;")
+        lay.addWidget(info)
+
+        tipo_lay = QHBoxLayout()
+        rb_add = QRadioButton("Adicionar")
+        rb_sub = QRadioButton("Diminuir")
+        rb_add.setChecked(True)
+        for rb in [rb_add, rb_sub]:
+            rb.setFont(QFont("Arial", 11))
+            rb.setStyleSheet("""
+                QRadioButton { color: #e6edf3; background: transparent; spacing: 8px; }
+                QRadioButton::indicator { width: 16px; height: 16px; border-radius: 8px; border: 2px solid #30363d; background: #161b22; }
+                QRadioButton::indicator:checked { border-color: #238636; background: #238636; }
+                QRadioButton::indicator:hover { border-color: #58a6ff; }
+            """)
+        tipo_lay.addWidget(rb_add)
+        tipo_lay.addWidget(rb_sub)
+        lay.addLayout(tipo_lay)
+
+        lbl_v = QLabel("Quantidade (t):")
+        lbl_v.setStyleSheet(f"color: {MUTED}; font-size: 10px; font-weight: 700; background: transparent;")
+        inp_v = QLineEdit()
+        inp_v.setPlaceholderText("Ex: 100")
+        inp_v.setMinimumHeight(34)
+        lay.addWidget(lbl_v)
+        lay.addWidget(inp_v)
+
+        btns = QHBoxLayout()
+        bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
+        bo = QPushButton("CONFIRMAR"); bo.setObjectName("btn_ok")
+        btns.addWidget(bc); btns.addWidget(bo)
+        lay.addLayout(btns)
+
+        def confirmar():
+            try:
+                qtd = float(inp_v.text().replace(",", "."))
+            except Exception:
+                QMessageBox.warning(dlg, "Atenção", "Informe um valor numérico.")
+                return
+
+            novo_saldo = bloco["saldo_total"] + qtd if rb_add.isChecked() else bloco["saldo_total"] - qtd
+            if novo_saldo < 0:
+                QMessageBox.warning(dlg, "Atenção", f"Saldo resultante seria negativo: {novo_saldo:.0f} t")
+                return
+
+            try:
+                from planilha import atualizar_saldo_dados
+                atualizar_saldo_dados(conta, bloco["cliente"], bloco["pedido"], bloco["produto"], novo_saldo)
+                dlg.accept()
+                self._lbl_status.setText(f"Saldo atualizado para {novo_saldo:.0f} t")
+                self._carregar()
+            except Exception as e:
+                QMessageBox.critical(dlg, "Erro", str(e))
+
+        bc.clicked.connect(dlg.reject)
+        bo.clicked.connect(confirmar)
+        dlg.exec()
+
+    def _novo_pedido(self):
+        conta = self._combo_conta.currentText()
+        if conta == "(nenhuma conta)":
+            self._lbl_status.setText("Configure uma conta Gmail primeiro.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Novo Pedido")
+        dlg.setFixedSize(420, 420)
+        dlg.setStyleSheet(DIALOG_SS)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(12)
+
+        titulo = QLabel("NOVO PEDIDO")
+        titulo.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; background: transparent; margin-bottom: 6px;")
+        lay.addWidget(titulo)
+
+        campos = [
+            ("Destino / Cidade", "Ex: CAMPO ALEGRE - GO"),
+            ("Cliente",          "Ex: JOSE FAVA NETO"),
+            ("Pedido",           "Ex: 31441"),
+            ("Produto",          "Ex: UREIA"),
+            ("Saldo Total (t)",  "Ex: 600"),
+        ]
+
+        inputs = []
+        for label, placeholder in campos:
+            grp = QVBoxLayout()
+            grp.setSpacing(4)
+            lbl = QLabel(label + ":")
+            lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; background: transparent;")
+            inp = QLineEdit()
+            inp.setPlaceholderText(placeholder)
+            inp.setMinimumHeight(32)
+            inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
+            grp.addWidget(lbl)
+            grp.addWidget(inp)
+            lay.addLayout(grp)
+            inputs.append(inp)
+
+        btns = QHBoxLayout()
+        bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
+        bo = QPushButton("CRIAR");    bo.setObjectName("btn_ok")
+        btns.addWidget(bc); btns.addWidget(bo)
+        lay.addLayout(btns)
+
+        def criar():
+            vals = [inp.text().strip().upper() for inp in inputs]
+            destino, cliente, pedido, produto, saldo_str = vals
+            if not all([destino, cliente, pedido, produto, saldo_str]):
+                QMessageBox.warning(dlg, "Atenção", "Preencha todos os campos.")
+                return
+            try:
+                saldo = float(saldo_str.replace(",", "."))
+            except Exception:
+                QMessageBox.warning(dlg, "Atenção", "Saldo total deve ser um número.")
+                return
+            try:
+                from planilha import criar_pedido_dados
+                criar_pedido_dados(conta, destino, cliente, pedido, produto, saldo)
+                dlg.accept()
+                self._lbl_status.setText(f"Pedido {pedido} criado com sucesso!")
+                self._carregar()
+            except Exception as e:
+                QMessageBox.critical(dlg, "Erro", str(e))
+
+        bc.clicked.connect(dlg.reject)
+        bo.clicked.connect(criar)
+        dlg.exec()
+
     def _atualizar_contas(self):
         self._combo_conta.clear()
         contas = _listar_contas_gmail()
@@ -404,11 +579,30 @@ class PlanilhaWidget(QWidget):
         QApplication.processEvents()
 
         try:
-            blocos = carregar_blocos(conta)
+            blocos = carregar_blocos_dados(conta)
+            self._todos_blocos = blocos
             self._renderizar(blocos)
             self._lbl_status.setText(f"{len(blocos)} pedido(s) encontrado(s)")
         except Exception as e:
             self._lbl_status.setText(f"Erro: {e}")
+
+    def _filtrar_pedidos(self, texto):
+        if not hasattr(self, '_todos_blocos'):
+            return
+        if not texto:
+            self._renderizar(self._todos_blocos)
+            return
+        txt = texto.upper()
+        filtrado = [
+            b for b in self._todos_blocos
+            if any(txt in str(v).upper() for v in [
+                b.get("cliente",""), b.get("pedido",""),
+                b.get("produto",""), b.get("destino",""),
+                b.get("cidade",""), b.get("fabrica","")
+            ])
+        ]
+        self._renderizar(filtrado)
+        self._lbl_status.setText(f"{len(filtrado)} resultado(s)")
 
     def _renderizar(self, blocos):
         while self._grid.count():
@@ -481,6 +675,15 @@ class PlanilhaWidget(QWidget):
             padding: 2px 8px;
         """)
 
+        btn_saldo = QPushButton("+/-")
+        btn_saldo.setFixedHeight(22)
+        btn_saldo.setMinimumWidth(32)
+        btn_saldo.setFont(QFont("Arial", 8, QFont.Bold))
+        btn_saldo.setToolTip("Ajustar saldo total")
+        btn_saldo.setStyleSheet("QPushButton { background-color: #1a2a3a; border: 1px solid #58a6ff; color: #58a6ff; font-size: 9px; font-weight: 700; border-radius: 4px; padding: 0px 4px; } QPushButton:hover { background-color: #2a3a4a; }")
+        p_s = QPalette(); p_s.setColor(QPalette.ButtonText, QColor("#58a6ff")); btn_saldo.setPalette(p_s)
+        btn_saldo.clicked.connect(lambda _, bloco=b: self._ajustar_saldo(bloco))
+
         btn_expand = QPushButton("▶")
         btn_expand.setFixedSize(22, 22)
         btn_expand.setStyleSheet(f"""
@@ -496,6 +699,7 @@ class PlanilhaWidget(QWidget):
 
         top.addWidget(lbl_dest, 1)
         top.addWidget(lbl_saldo)
+        top.addWidget(btn_saldo)
         top.addWidget(btn_expand)
         h_lay.addLayout(top)
 
@@ -516,19 +720,23 @@ class PlanilhaWidget(QWidget):
         h_lay.addLayout(info_row("PEDIDO",  b["pedido"]))
         h_lay.addLayout(info_row("PRODUTO", b["produto"]))
 
-        bar_bg = QFrame()
-        bar_bg.setFixedHeight(5)
-        bar_bg.setStyleSheet(f"background: {BORDER2}; border-radius: 2px;")
-        bar_fill = QFrame(bar_bg)
-        bar_fill.setFixedHeight(5)
-        fill_w = max(0, min(252, int(pct_fill / 100 * 252)))
-        if fill_w == 0 and carregado == 0:
-            fill_w = 0
-        elif fill_w < 3:
-            fill_w = 3
-        bar_fill.setFixedWidth(fill_w)
-        bar_fill.setStyleSheet(f"background: {cor_saldo}; border-radius: 2px;")
-        h_lay.addWidget(bar_bg)
+        bar = QProgressBar()
+        bar.setFixedHeight(5)
+        bar.setRange(0, 100)
+        bar.setValue(int(pct_fill))
+        bar.setTextVisible(False)
+        bar.setStyleSheet(f"""
+            QProgressBar {{
+                background: {BORDER2};
+                border-radius: 2px;
+                border: none;
+            }}
+            QProgressBar::chunk {{
+                background: {cor_saldo};
+                border-radius: 2px;
+            }}
+        """)
+        h_lay.addWidget(bar)
 
         rodape = QHBoxLayout()
         lbl_t = QLabel(f"Total: {total:.0f} t")
@@ -618,6 +826,353 @@ class PlanilhaWidget(QWidget):
         header.mousePressEvent = lambda e: toggle()
 
         return outer, detalhe
+
+
+class BaseWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent;")
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
+
+        topo = QHBoxLayout()
+        titulo = QLabel("CONTROLE DE ORDENS")
+        titulo.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px; background: transparent;")
+
+        self._combo_conta = QComboBox()
+        self._combo_conta.setFixedWidth(220)
+        self._combo_conta.setStyleSheet(f"""
+            QComboBox {{
+                background: {SURFACE}; border: 1px solid {BORDER2};
+                border-radius: 6px; padding: 6px 10px; color: {TEXT}; font-size: 12px;
+            }}
+        """)
+
+        self._inp_busca = QLineEdit()
+        self._inp_busca.setPlaceholderText("Buscar por pagador, pedido, produto...")
+        self._inp_busca.setFixedWidth(260)
+        self._inp_busca.setStyleSheet(f"""
+            QLineEdit {{
+                background: {SURFACE}; border: 1px solid {BORDER2};
+                border-radius: 6px; padding: 6px 10px; color: {TEXT}; font-size: 12px;
+            }}
+            QLineEdit:focus {{ border-color: {ACCENT}; }}
+        """)
+        self._inp_busca.textChanged.connect(self._filtrar)
+
+        btn_carregar = QPushButton("↺  CARREGAR")
+        btn_carregar.setStyleSheet(f"""
+            QPushButton {{
+                background: {ACCENT}; color: white; border: none;
+                border-radius: 6px; padding: 7px 14px; font-weight: 700; font-size: 12px;
+            }}
+            QPushButton:hover {{ background: {ACCENT_H}; }}
+        """)
+        btn_carregar.clicked.connect(self._carregar)
+
+        topo.addWidget(titulo)
+        topo.addStretch()
+        topo.addWidget(self._inp_busca)
+        topo.addWidget(self._combo_conta)
+        topo.addWidget(btn_carregar)
+        root.addLayout(topo)
+
+        self._lbl_status = QLabel("")
+        self._lbl_status.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        root.addWidget(self._lbl_status)
+
+        # Tabela
+        self._tabela = QTableWidget()
+        self._tabela.setStyleSheet(f"""
+            QTableWidget {{
+                background: {SURFACE};
+                border: 1px solid {BORDER};
+                border-radius: 8px;
+                gridline-color: {BORDER};
+                color: {TEXT};
+                font-size: 11px;
+            }}
+            QTableWidget::item {{ padding: 4px 8px; }}
+            QTableWidget::item:selected {{
+                background: {ACCENT}33;
+                color: {TEXT};
+            }}
+            QHeaderView::section {{
+                background: #1c2128;
+                color: {MUTED};
+                font-size: 10px;
+                font-weight: 700;
+                letter-spacing: 0.5px;
+                padding: 6px 8px;
+                border: none;
+                border-bottom: 1px solid {BORDER};
+                border-right: 1px solid {BORDER};
+            }}
+            QScrollBar:vertical {{
+                background: {SURFACE}; width: 8px;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {BORDER2}; border-radius: 4px;
+            }}
+        """)
+        self._tabela.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._tabela.setSelectionBehavior(QTableWidget.SelectRows)
+        self._tabela.setAlternatingRowColors(True)
+        self._tabela.verticalHeader().setVisible(False)
+        self._tabela.horizontalHeader().setStretchLastSection(True)
+        self._tabela.setSortingEnabled(True)
+
+        COLUNAS = ["DATA", "PAGADOR", "PEDIDO", "PRODUTO", "EMBALAGEM",
+                   "PESO", "FRETE/EMP", "PLACA", "ORIGEM", "DESTINO", "UF", "STATUS", "", ""]
+        self._tabela.setColumnCount(len(COLUNAS))
+        self._tabela.setHorizontalHeaderLabels(COLUNAS)
+
+        larguras = [90, 130, 80, 130, 90, 60, 80, 90, 120, 120, 40, 120, 50, 50]
+        for i, w in enumerate(larguras):
+            self._tabela.setColumnWidth(i, w)
+        self._tabela.horizontalHeader().setStretchLastSection(False)
+        self._tabela.setColumnWidth(12, 50)
+        self._tabela.setColumnWidth(13, 50)
+
+        root.addWidget(self._tabela)
+
+        self._todos_dados = []
+        self._linhas_editando = {}
+        self._row_to_linha_planilha = {}
+        self._tabela.itemClicked.connect(self._on_item_click)
+        self._atualizar_contas()
+
+    def _atualizar_contas(self):
+        self._combo_conta.clear()
+        contas = _listar_contas_gmail()
+        self._combo_conta.addItems(contas if contas else ["(nenhuma conta)"])
+
+    def _carregar(self):
+        conta = self._combo_conta.currentText()
+        if conta == "(nenhuma conta)":
+            self._lbl_status.setText("Configure uma conta Gmail primeiro.")
+            return
+
+        self._lbl_status.setText("Carregando...")
+        QApplication.processEvents()
+
+        try:
+            dados = carregar_base(conta)
+            self._todos_dados = dados
+            self._renderizar(dados)
+            self._lbl_status.setText(f"{len(dados)} ordem(ns) encontrada(s)")
+        except Exception as e:
+            self._lbl_status.setText(f"Erro: {e}")
+
+    def _filtrar(self, texto):
+        if not texto:
+            self._renderizar(self._todos_dados)
+            return
+        txt = texto.upper()
+        filtrado = [
+            d for d in self._todos_dados
+            if any(txt in str(v).upper() for v in d)
+        ]
+        self._renderizar(filtrado)
+        self._lbl_status.setText(f"{len(filtrado)} resultado(s)")
+
+    def _renderizar(self, dados):
+        self._tabela.setRowCount(0)
+        self._tabela.setSortingEnabled(False)
+        self._linhas_editando   = {}
+        self._row_to_linha_planilha = {}
+
+        COR_CARR = "#1a3a1a"
+        COR_NAO  = "#3a1a1a"
+        COR_PAGO = "#1a2a3a"
+        COR_MARC = "#3a2a00"
+
+        for linha in dados:
+            r = self._tabela.rowCount()
+            self._tabela.insertRow(r)
+            self._tabela.setRowHeight(r, 28)
+
+            if len(linha) > 12:
+                self._row_to_linha_planilha[r] = linha[12]
+
+            status = str(linha[11] if len(linha) > 11 else "").upper()
+            if "CARREGADO" in status and "NÃO" not in status:
+                bg = QColor(COR_CARR)
+            elif "NÃO" in status or "NAO" in status:
+                bg = QColor(COR_NAO)
+            elif "PAGO" in status:
+                bg = QColor(COR_PAGO)
+            elif "MARCADO" in status:
+                bg = QColor(COR_MARC)
+            else:
+                bg = None
+
+            for c, val in enumerate(linha[:12]):
+                item = QTableWidgetItem(str(val) if val is not None else "")
+                item.setTextAlignment(Qt.AlignCenter)
+                if bg:
+                    item.setBackground(bg)
+                self._tabela.setItem(r, c, item)
+
+            self._tabela.setItem(r, 12, self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(r, 13, self._make_btn_item("DEL",  "#da3633"))
+
+        self._tabela.setSortingEnabled(True)
+        try:
+            self._tabela.itemClicked.disconnect()
+        except Exception:
+            pass
+        self._tabela.itemClicked.connect(self._on_item_click)
+
+    def _make_btn_item(self, texto, cor):
+        item = QTableWidgetItem(texto)
+        item.setTextAlignment(Qt.AlignCenter)
+        item.setForeground(QColor(cor))
+        item.setBackground(QColor("#161b22"))
+        item.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        item.setToolTip({"EDIT": "Editar linha", "DEL": "Remover linha", "OK": "Salvar"}.get(texto, ""))
+        return item
+
+    def _on_item_click(self, item):
+        col = item.column()
+        row = item.row()
+        if col == 12:
+            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(12)]
+            self._toggle_edicao(row, dados)
+        elif col == 13:
+            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(12)]
+            self._deletar_linha(row, dados)
+
+    def _toggle_edicao(self, row, dados_orig):
+        if row in self._linhas_editando:
+            self._salvar_edicao(row, dados_orig)
+            return
+
+        self._linhas_editando[row] = dados_orig
+        self._tabela.setRowHeight(row, 36)
+
+        STATUS_OPTS = ["MARCADO", "CHEGA", "CARREGADO", "AGUARDANDO", "DESCARGA"]
+
+        for c in range(11):
+            val = str(dados_orig[c]) if c < len(dados_orig) else ""
+            inp = QLineEdit(val)
+            inp.setAlignment(Qt.AlignCenter)
+            inp.setFrame(False)
+            inp.setStyleSheet(f"""
+                QLineEdit {{
+                    background: #0d1117;
+                    border: none;
+                    border-bottom: 2px solid {ACCENT};
+                    color: {TEXT};
+                    font-size: 11px;
+                    padding: 0px 2px;
+                }}
+            """)
+            self._tabela.setCellWidget(row, c, inp)
+
+        combo = QComboBox()
+        combo.addItems(STATUS_OPTS)
+        status_atual = str(dados_orig[11]) if len(dados_orig) > 11 else ""
+        idx = combo.findText(status_atual, Qt.MatchFixedString)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        combo.setStyleSheet(f"""
+            QComboBox {{
+                background: #0d1117;
+                border: none;
+                border-bottom: 2px solid {ACCENT};
+                color: {TEXT};
+                font-size: 11px;
+                padding: 0px 2px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 16px; }}
+            QComboBox::down-arrow {{
+                border-left: 3px solid transparent;
+                border-right: 3px solid transparent;
+                border-top: 4px solid {MUTED};
+                width: 0; height: 0; margin-right: 4px;
+            }}
+        """)
+        self._tabela.setCellWidget(row, 11, combo)
+
+        self._tabela.setItem(row, 12, self._make_btn_item("OK", "#2ea043"))
+
+    def _salvar_edicao(self, row, dados_orig):
+        conta = self._combo_conta.currentText()
+        novos = []
+        for c in range(11):
+            w = self._tabela.cellWidget(row, c)
+            novos.append(w.text() if isinstance(w, QLineEdit) else (self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""))
+        combo = self._tabela.cellWidget(row, 11)
+        novos.append(combo.currentText() if isinstance(combo, QComboBox) else "")
+
+        try:
+            from planilha import atualizar_linha_base
+            num_linha = self._row_to_linha_planilha.get(row) or self._encontrar_linha_base(dados_orig, conta)
+            if num_linha:
+                atualizar_linha_base(conta, num_linha, novos)
+            else:
+                QMessageBox.warning(self, "Aviso", "Linha não encontrada na planilha.")
+                return
+
+            STATUS_OPTS_COR = {
+                "CARREGADO": "#1a3a1a", "NÃO CARREGADO": "#3a1a1a",
+                "PAGO": "#1a2a3a", "MARCADO": "#3a2a00"
+            }
+            status = novos[11].upper()
+            bg = QColor(STATUS_OPTS_COR.get(status, "#161b22"))
+
+            for c in range(11):
+                self._tabela.removeCellWidget(row, c)
+            self._tabela.removeCellWidget(row, 11)
+
+            for c in range(12):
+                item = QTableWidgetItem(novos[c])
+                item.setTextAlignment(Qt.AlignCenter)
+                item.setBackground(bg)
+                self._tabela.setItem(row, c, item)
+
+            self._tabela.setItem(row, 12, self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(row, 13, self._make_btn_item("DEL",  "#da3633"))
+
+            self._linhas_editando.pop(row, None)
+            self._tabela.setRowHeight(row, 28)
+            self._lbl_status.setText("Linha atualizada com sucesso.")
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", str(e))
+
+    def _deletar_linha(self, row, dados):
+        conta = self._combo_conta.currentText()
+        resp = QMessageBox.question(
+            self, "Confirmar", "Deseja remover esta linha da planilha?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if resp != QMessageBox.Yes:
+            return
+        try:
+            from planilha import deletar_linha_base
+            num_linha = self._row_to_linha_planilha.get(row) or self._encontrar_linha_base(dados, conta)
+            if num_linha:
+                deletar_linha_base(conta, num_linha)
+            self._tabela.removeRow(row)
+            self._lbl_status.setText("Linha removida com sucesso.")
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", str(e))
+
+    def _encontrar_linha_base(self, dados, conta):
+        from planilha import carregar_base_com_linhas
+        try:
+            linhas = carregar_base_com_linhas(conta)
+            chave = [str(dados[i]) if i < len(dados) else "" for i in range(4)]
+            for num_linha, linha in linhas:
+                if [str(linha[i]) if i < len(linha) else "" for i in range(4)] == chave:
+                    return num_linha
+        except Exception:
+            pass
+        return None
 
 
 def parsear_mensagem_whatsapp(texto):
@@ -951,7 +1506,8 @@ class UI(QWidget):
         self._nav_btns = []
         self._nav_btns.append(make_nav_btn("📋", "Gerar Ordem", 0))
         self._nav_btns.append(make_nav_btn("🕐", "Histórico", 1))
-        self._nav_btns.append(make_nav_btn("📊", "Planilha", 2))
+        self._nav_btns.append(make_nav_btn("📦", "Controle de Pedidos", 2))
+        self._nav_btns.append(make_nav_btn("📊", "Controle de Ordens", 3))
         self._nav_btns[0].setChecked(True)
 
         for b in self._nav_btns:
@@ -969,6 +1525,8 @@ class UI(QWidget):
         self._stack.addWidget(self._historico_widget)
         self._planilha_widget = PlanilhaWidget()
         self._stack.addWidget(self._planilha_widget)
+        self._base_widget = BaseWidget()
+        self._stack.addWidget(self._base_widget)
 
         root.addWidget(self._stack, 1)
 
@@ -980,6 +1538,8 @@ class UI(QWidget):
             self._historico_widget.recarregar()
         if idx == 2:
             self._planilha_widget._atualizar_contas()
+        if idx == 3:
+            self._base_widget._atualizar_contas()
 
     def _build_pagina_ordem(self):
         pagina = QWidget()
@@ -1057,6 +1617,18 @@ class UI(QWidget):
         r1.addWidget(make_field("Solicitante", self.entradas["Solicitante"]), 2)
         v.addLayout(r1)
 
+        def _atualizar_origem(texto):
+            t = texto.upper().strip()
+            origem = self.entradas["Origem"]
+            if "FERTIMAXI" in t:
+                origem.setText("FEIRA DE SANTANA - BA")
+            elif "INTERMARITIMA" in t or ("TIMAC" in t and "CAMACARI" not in t and "CAMAÇARI" not in t):
+                origem.setText("CANDEIAS - BA")
+            elif "TIMAC" in t and ("CAMACARI" in t or "CAMAÇARI" in t):
+                origem.setText("CAMAÇARI - BA")
+
+        self.entradas["Fábrica"].textChanged.connect(_atualizar_origem)
+
         r2 = QHBoxLayout(); r2.setSpacing(8)
         self.entradas["Origem"]  = make_input()
         self.entradas["Destino"] = make_input()
@@ -1130,8 +1702,7 @@ class UI(QWidget):
         self.entradas["Carroceria"].setCurrentIndex(-1)
         self.entradas["Carroceria"].lineEdit().setPlaceholderText("Selecione...")
         self.entradas["Cavalo"] = make_input()
-        self.entradas["Cavalo"].textChanged.disconnect()
-        self.entradas["Cavalo"].textChanged.connect(lambda t, i=self.entradas["Cavalo"]: _formatar_placa(i, t))
+        self.entradas["Cavalo"].textChanged.connect(lambda t, i=self.entradas["Cavalo"]: _forcar_maiusculo(i, t))
         r1.addWidget(make_field("Carroceria", self.entradas["Carroceria"]), 1)
         r1.addWidget(make_field("Cavalo", self.entradas["Cavalo"]), 1)
         v.addLayout(r1)
@@ -1539,7 +2110,7 @@ class UI(QWidget):
 
         lay.addWidget(QLabel("Deseja registrar esta ordem na planilha de controle?"))
 
-        STATUS_OPTS = ["CARREGADO", "NÃO CARREGADO", "PAGO"]
+        STATUS_OPTS = ["DESCARGA", "CARREGADO", "MARCADO", "CHEGA", "AGUARDANDO"]
         lbl_st = QLabel("STATUS:")
         combo_st = QComboBox()
         combo_st.addItems(STATUS_OPTS)
@@ -1563,30 +2134,19 @@ class UI(QWidget):
 
         def gravar():
             try:
-                blocos = carregar_blocos(conta)
-                pedido_norm  = str(pedido).strip().upper()
-                cliente_norm = str(cliente).strip().upper()
-                produto_norm = str(produto).strip().upper()
+                from planilha import gravar_carregamento_dados
+                data    = str(dados.get("Data Apresentação", "")).upper()
+                placa   = str(dados.get("Cavalo", "")).upper()
+                peso    = str(dados.get("Peso", "")).upper()
+                frete   = str(dados.get("Frete/EMP", "")).upper()
+                st      = combo_st.currentText().upper()
+                destino = str(dados.get("Destino", "")).upper()
+                produto_val = str(dados.get("Produto", "")).upper()
 
-                bloco = None
-                for b in blocos:
-                    if (str(b["pedido"]).strip().upper()  == pedido_norm and
-                        str(b["cliente"]).strip().upper() == cliente_norm and
-                        produto_norm in str(b["produto"]).strip().upper()):
-                        bloco = b
-                        break
-
-                if not bloco:
-                    QMessageBox.warning(dlg, "Não encontrado",
-                        f"Bloco não encontrado para:\nCliente: {cliente}\nPedido: {pedido}")
-                    return
-
-                data  = str(dados.get("Data Apresentação", "")).upper()
-                placa = str(dados.get("Cavalo", "")).upper()
-                peso  = str(dados.get("Peso", "")).upper()
-                st    = combo_st.currentText().upper()
-
-                gravar_carregamento(conta, bloco, data, placa, peso, st)
+                gravar_carregamento_dados(
+                    conta, destino, cliente, pedido, produto_val,
+                    data, placa, peso, frete, st
+                )
                 dlg.accept()
                 QMessageBox.information(self, "Sucesso", "Registrado na planilha com sucesso!")
 
