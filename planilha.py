@@ -1,8 +1,8 @@
 import os
 from pathlib import Path
 
-SPREADSHEET_ID   = "1yyS5POpPyv6xanTLgJ8Xu-jy8enCjDIIXAJRNkF7Rl8"
-ABA              = "teste pedidos"
+SPREADSHEET_ID   = "1gQCZjGW0nWJcRBMj9hajCQgocBN1QZxQ2Oxotmh-dmA"
+ABA              = "Pagina01"
 TOKENS_DIR       = "gmail_tokens"
 CREDENTIALS_FILE = "credentials.json"
 COL_STARTS       = [0, 7, 14]
@@ -73,23 +73,29 @@ def carregar_blocos(conta):
                 continue
 
             partes  = [p.strip() for p in cab.split("/")]
-            destino = partes[0] if len(partes) > 0 else ""
-            cliente = partes[1] if len(partes) > 1 else ""
-            fabrica = partes[2] if len(partes) > 2 else ""
-            pedido  = partes[3] if len(partes) > 3 else ""
-            produto = partes[4] if len(partes) > 4 else ""
+            cliente = partes[0] if len(partes) > 0 else ""
+            cidade  = partes[1] if len(partes) > 1 else ""
+            fazenda = partes[2] if len(partes) > 2 else ""
+            fabrica = partes[3] if len(partes) > 3 else ""
+            pedido  = partes[4] if len(partes) > 4 else ""
+            produto = partes[5] if len(partes) > 5 else ""
 
             try:
-                saldo_total = float(str(cell(row, col + COL_WIDTH)).replace(",", "."))
+                saldo_total = float(str(cell(row, col + 5)).replace(",", "."))
             except Exception:
                 saldo_total = 0
 
+            row_cab = row
             row += 2
 
             linhas_dados = []
+            linha_total  = None
             while row < num_linhas:
-                c0 = cell(row, col).upper()
-                if "TOTAL" in c0 or "SALDO" in c0:
+                # TOTAL aparece na coluna C ou D do bloco (índices col+2 ou col+3)
+                c2 = cell(row, col + 2).upper()
+                c3 = cell(row, col + 3).upper()
+                if ("TOTAL" in c2 or "TOTAL" in c3):
+                    linha_total = row
                     row += 1
                     break
 
@@ -100,14 +106,11 @@ def carregar_blocos(conta):
                 frete  = cell(row, col + 4)
                 status = cell(row, col + 5)
 
-                if any([data, nota, placa, peso]):
+                if any([data, nota, placa, peso, frete, status]):
                     linhas_dados.append({
                         "data": data, "nota": nota, "placa": placa,
                         "peso": peso, "frete": frete, "status": status,
                     })
-                else:
-                    row += 1
-                    break
 
                 row += 1
 
@@ -122,8 +125,9 @@ def carregar_blocos(conta):
                 saldo_restante  = saldo_total
 
             blocos.append({
-                "destino":         destino,
                 "cliente":         cliente,
+                "cidade":          cidade,
+                "fazenda":         fazenda,
                 "fabrica":         fabrica,
                 "pedido":          pedido,
                 "produto":         produto,
@@ -131,6 +135,70 @@ def carregar_blocos(conta):
                 "total_carregado": total_carregado,
                 "saldo_restante":  saldo_restante,
                 "linhas":          linhas_dados,
+                "col":             col,
+                "linha_total":     linha_total,
+                "num_linhas_dados": len(linhas_dados),
             })
 
     return blocos
+
+
+def _col_letra(n):
+    resultado = ""
+    while n > 0:
+        n, r = divmod(n - 1, 26)
+        resultado = chr(65 + r) + resultado
+    return resultado
+
+
+def gravar_carregamento(conta, bloco, data, placa, peso, status):
+    service     = _autenticar(conta)
+    sheet       = service.spreadsheets()
+    col         = bloco["col"]
+    linha_total = bloco["linha_total"]
+
+    if linha_total is None:
+        raise Exception("Linha de TOTAL não encontrada no bloco.")
+
+    # Converte linha (1-based) para índice (0-based) para a API
+    linha_idx = linha_total - 1
+
+    # 1. Insere uma linha vazia antes do TOTAL
+    sheet.batchUpdate(
+        spreadsheetId=SPREADSHEET_ID,
+        body={
+            "requests": [{
+                "insertDimension": {
+                    "range": {
+                        "sheetId": _get_sheet_id(service),
+                        "dimension": "ROWS",
+                        "startIndex": linha_idx,
+                        "endIndex": linha_idx + 1,
+                    },
+                    "inheritFromBefore": True,
+                }
+            }]
+        }
+    ).execute()
+
+    # 2. Escreve os dados na nova linha
+    col_ini = _col_letra(col + 1)
+    col_fim = _col_letra(col + 6)
+    rng     = f"'{ABA}'!{col_ini}{linha_total}:{col_fim}{linha_total}"
+
+    nova_linha = [[data, "", placa, str(peso), "", status]]
+
+    sheet.values().update(
+        spreadsheetId=SPREADSHEET_ID,
+        range=rng,
+        valueInputOption="USER_ENTERED",
+        body={"values": nova_linha},
+    ).execute()
+
+
+def _get_sheet_id(service):
+    meta = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
+    for s in meta["sheets"]:
+        if s["properties"]["title"] == ABA:
+            return s["properties"]["sheetId"]
+    raise Exception(f"Aba '{ABA}' não encontrada.")

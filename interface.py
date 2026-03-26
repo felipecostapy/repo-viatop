@@ -6,7 +6,7 @@ from PySide6.QtCore import Qt, QDate, QThread, Signal, QTimer, QPropertyAnimatio
 from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon, QPalette
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
-from planilha import carregar_blocos
+from planilha import carregar_blocos, gravar_carregamento
 
 BG       = "#0d1117"
 SURFACE  = "#161b22"
@@ -382,6 +382,8 @@ class PlanilhaWidget(QWidget):
         scroll.setWidget(self._container)
         root.addWidget(scroll)
 
+        self._detalhes    = []
+        self._expand_btns = []
         self._atualizar_contas()
 
     def _atualizar_contas(self):
@@ -414,35 +416,61 @@ class PlanilhaWidget(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
+        self._detalhes    = []
+        self._expand_btns = []
+
         COLS = 3
+        cols_widgets = []
+        for i in range(COLS):
+            cw = QWidget()
+            cw.setStyleSheet("background: transparent;")
+            vb = QVBoxLayout(cw)
+            vb.setSpacing(10)
+            vb.setContentsMargins(0, 0, 0, 0)
+            vb.setAlignment(Qt.AlignTop)
+            cols_widgets.append((cw, vb))
+            self._grid.addWidget(cw, 0, i)
+
         for i, b in enumerate(blocos):
-            card = self._make_bloco_card(b)
-            self._grid.addWidget(card, i // COLS, i % COLS)
+            card, detalhe = self._make_bloco_card(b)
+            self._detalhes.append(detalhe)
+            cols_widgets[i % COLS][1].addWidget(card)
 
     def _make_bloco_card(self, b):
-        frame = QFrame()
-        frame.setStyleSheet(f"""
+        outer = QFrame()
+        outer.setStyleSheet(f"""
             QFrame {{
                 background-color: {SURFACE};
                 border: 1px solid {BORDER};
                 border-radius: 10px;
             }}
         """)
-        frame.setMinimumWidth(280)
+        outer.setMinimumWidth(280)
 
-        v = QVBoxLayout(frame)
-        v.setContentsMargins(14, 12, 14, 12)
-        v.setSpacing(8)
+        v_outer = QVBoxLayout(outer)
+        v_outer.setContentsMargins(0, 0, 0, 0)
+        v_outer.setSpacing(0)
 
-        saldo   = b["saldo_restante"]
-        total   = b["saldo_total"]
-        pct     = (saldo / total * 100) if total > 0 else 0
-        cor_saldo = ACCENT if pct > 30 else "#e3b341" if pct > 10 else DANGER
+        saldo     = b["saldo_restante"]
+        total     = b["saldo_total"]
+        carregado = b["total_carregado"]
+        pct_saldo   = (saldo / total * 100) if total > 0 else 0
+        pct_fill    = (carregado / total * 100) if total > 0 else 100
+        cor_saldo   = DANGER if pct_saldo > 30 else "#e3b341" if pct_saldo > 10 else ACCENT
+
+        # ── CABEÇALHO CLICÁVEL ─────────────────
+        header = QWidget()
+        header.setStyleSheet("background: transparent;")
+        header.setCursor(Qt.PointingHandCursor)
+        h_lay = QVBoxLayout(header)
+        h_lay.setContentsMargins(14, 12, 14, 10)
+        h_lay.setSpacing(6)
 
         top = QHBoxLayout()
-        lbl_dest = QLabel(b["destino"].upper())
+        lbl_dest = QLabel(b["cliente"].upper())
         lbl_dest.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700; background: transparent;")
-        lbl_saldo = QLabel(f"{saldo:.0f} t")
+        lbl_dest.setWordWrap(True)
+        lbl_saldo = QLabel(f"Saldo: {saldo:.0f} t")
         lbl_saldo.setStyleSheet(f"""
             color: {cor_saldo};
             background: {cor_saldo}18;
@@ -452,57 +480,144 @@ class PlanilhaWidget(QWidget):
             font-weight: 700;
             padding: 2px 8px;
         """)
+
+        btn_expand = QPushButton("▶")
+        btn_expand.setFixedSize(22, 22)
+        btn_expand.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none;
+                color: {MUTED}; font-size: 10px;
+            }}
+            QPushButton:hover {{ color: {TEXT}; }}
+        """)
+
+        self._expand_btns.append(btn_expand)
+        idx = len(self._expand_btns) - 1
+
         top.addWidget(lbl_dest, 1)
         top.addWidget(lbl_saldo)
-        v.addLayout(top)
-
-        sep = QFrame()
-        sep.setFrameShape(QFrame.HLine)
-        sep.setStyleSheet(f"background: {BORDER}; border: none; max-height: 1px;")
-        v.addWidget(sep)
+        top.addWidget(btn_expand)
+        h_lay.addLayout(top)
 
         def info_row(label, valor):
             h = QHBoxLayout()
             l = QLabel(label)
             l.setStyleSheet(f"color: {MUTED}; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; background: transparent;")
-            r = QLabel(str(valor))
-            r.setStyleSheet(f"color: {TEXT}; font-size: 12px; background: transparent;")
+            r = QLabel(str(valor).upper())
+            r.setStyleSheet(f"color: {TEXT}; font-size: 11px; background: transparent;")
             r.setWordWrap(True)
             h.addWidget(l, 1)
             h.addWidget(r, 2)
             return h
 
-        v.addLayout(info_row("CLIENTE", b["cliente"]))
-        v.addLayout(info_row("FÁBRICA", b["fabrica"]))
-        v.addLayout(info_row("PEDIDO",  b["pedido"]))
-        v.addLayout(info_row("PRODUTO", b["produto"]))
-
-        sep2 = QFrame()
-        sep2.setFrameShape(QFrame.HLine)
-        sep2.setStyleSheet(f"background: {BORDER}; border: none; max-height: 1px;")
-        v.addWidget(sep2)
+        h_lay.addLayout(info_row("CIDADE",  b.get("cidade",  "")))
+        h_lay.addLayout(info_row("FAZENDA", b.get("fazenda", "")))
+        h_lay.addLayout(info_row("FÁBRICA", b.get("fabrica", "")))
+        h_lay.addLayout(info_row("PEDIDO",  b["pedido"]))
+        h_lay.addLayout(info_row("PRODUTO", b["produto"]))
 
         bar_bg = QFrame()
-        bar_bg.setFixedHeight(6)
-        bar_bg.setStyleSheet(f"background: {BORDER2}; border-radius: 3px;")
+        bar_bg.setFixedHeight(5)
+        bar_bg.setStyleSheet(f"background: {BORDER2}; border-radius: 2px;")
         bar_fill = QFrame(bar_bg)
-        bar_fill.setFixedHeight(6)
-        fill_w = max(4, int(pct / 100 * 260))
+        bar_fill.setFixedHeight(5)
+        fill_w = max(0, min(252, int(pct_fill / 100 * 252)))
+        if fill_w == 0 and carregado == 0:
+            fill_w = 0
+        elif fill_w < 3:
+            fill_w = 3
         bar_fill.setFixedWidth(fill_w)
-        bar_fill.setStyleSheet(f"background: {cor_saldo}; border-radius: 3px;")
-        v.addWidget(bar_bg)
+        bar_fill.setStyleSheet(f"background: {cor_saldo}; border-radius: 2px;")
+        h_lay.addWidget(bar_bg)
 
         rodape = QHBoxLayout()
-        lbl_total = QLabel(f"Total: {total:.0f} t")
-        lbl_total.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
-        lbl_carregado = QLabel(f"Carregado: {b['total_carregado']:.0f} t")
-        lbl_carregado.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
-        rodape.addWidget(lbl_total)
+        lbl_t = QLabel(f"Total: {total:.0f} t")
+        lbl_t.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        lbl_c = QLabel(f"Carregado: {carregado:.0f} t")
+        lbl_c.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        rodape.addWidget(lbl_t)
         rodape.addStretch()
-        rodape.addWidget(lbl_carregado)
-        v.addLayout(rodape)
+        rodape.addWidget(lbl_c)
+        h_lay.addLayout(rodape)
 
-        return frame
+        v_outer.addWidget(header)
+
+        # ── DETALHE EXPANSÍVEL ─────────────────
+        detalhe = QWidget()
+        detalhe.setStyleSheet(f"background: transparent;")
+        detalhe.setVisible(False)
+        d_lay = QVBoxLayout(detalhe)
+        d_lay.setContentsMargins(14, 0, 14, 12)
+        d_lay.setSpacing(4)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"background: {BORDER}; border: none; max-height: 1px; margin-bottom: 6px;")
+        d_lay.addWidget(sep)
+
+        cab_linha = QHBoxLayout()
+        for txt, w in [("DATA", 2), ("NOTA", 2), ("PLACA", 2), ("PESO", 1), ("STATUS", 3)]:
+            l = QLabel(txt)
+            l.setStyleSheet(f"color: #444d56; font-size: 10px; font-weight: 700; background: transparent;")
+            cab_linha.addWidget(l, w)
+        d_lay.addLayout(cab_linha)
+
+        for linha in b.get("linhas", []):
+            row_w = QWidget()
+            row_w.setStyleSheet(f"background: transparent;")
+            row_h = QHBoxLayout(row_w)
+            row_h.setContentsMargins(0, 2, 0, 2)
+            row_h.setSpacing(4)
+
+            status = str(linha.get("status", "")).upper()
+            if "NÃO" in status or "NAO" in status:
+                cor_st = DANGER
+            elif "CARREGADO" in status or "PAGO" in status:
+                cor_st = ACCENT
+            else:
+                cor_st = MUTED
+
+            for val, w in [
+                (linha.get("data",   ""), 2),
+                (linha.get("nota",   ""), 2),
+                (linha.get("placa",  ""), 2),
+                (linha.get("peso",   ""), 1),
+            ]:
+                l = QLabel(str(val))
+                l.setStyleSheet(f"color: {TEXT}; font-size: 11px; background: transparent;")
+                row_h.addWidget(l, w)
+
+            lbl_st = QLabel(status)
+            lbl_st.setStyleSheet(f"color: {cor_st}; font-size: 10px; font-weight: 600; background: transparent;")
+            row_h.addWidget(lbl_st, 3)
+
+            d_lay.addWidget(row_w)
+
+        v_outer.addWidget(detalhe)
+
+        def toggle(my_idx=idx):
+            expanded = detalhe.isVisible()
+            for j, d in enumerate(self._detalhes):
+                try:
+                    d.setVisible(False)
+                except RuntimeError:
+                    pass
+            for j, btn in enumerate(self._expand_btns):
+                try:
+                    btn.setText("▶")
+                except RuntimeError:
+                    pass
+            if not expanded:
+                try:
+                    detalhe.setVisible(True)
+                    self._expand_btns[my_idx].setText("▼")
+                except RuntimeError:
+                    pass
+
+        btn_expand.clicked.connect(toggle)
+        header.mousePressEvent = lambda e: toggle()
+
+        return outer, detalhe
 
 
 def parsear_mensagem_whatsapp(texto):
@@ -1406,6 +1521,82 @@ class UI(QWidget):
         """)
         msg.exec()
 
+        self._dialog_gravar_planilha(self._thread.dados)
+
+    def _dialog_gravar_planilha(self, dados):
+        conta = self._planilha_widget._combo_conta.currentText()
+        if not conta or conta == "(nenhuma conta)":
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Gravar na Planilha?")
+        dlg.setFixedSize(400, 300)
+        dlg.setStyleSheet(DIALOG_SS)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(12)
+
+        lay.addWidget(QLabel("Deseja registrar esta ordem na planilha de controle?"))
+
+        STATUS_OPTS = ["CARREGADO", "NÃO CARREGADO", "PAGO"]
+        lbl_st = QLabel("STATUS:")
+        combo_st = QComboBox()
+        combo_st.addItems(STATUS_OPTS)
+        combo_st.setStyleSheet(f"background:{SURFACE}; border:1px solid {BORDER2}; border-radius:6px; padding:6px; color:{TEXT};")
+        lay.addWidget(lbl_st)
+        lay.addWidget(combo_st)
+
+        pedido  = dados.get("Pedido", "")
+        cliente = dados.get("Cliente", "")
+        produto = dados.get("Produto", "")
+
+        info = QLabel(f"Cliente: {cliente}\nPedido: {pedido}\nProduto: {produto}")
+        info.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
+        lay.addWidget(info)
+
+        btns = QHBoxLayout()
+        bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
+        bo = QPushButton("GRAVAR");   bo.setObjectName("btn_ok")
+        btns.addWidget(bc); btns.addWidget(bo)
+        lay.addLayout(btns)
+
+        def gravar():
+            try:
+                blocos = carregar_blocos(conta)
+                pedido_norm  = str(pedido).strip().upper()
+                cliente_norm = str(cliente).strip().upper()
+                produto_norm = str(produto).strip().upper()
+
+                bloco = None
+                for b in blocos:
+                    if (str(b["pedido"]).strip().upper()  == pedido_norm and
+                        str(b["cliente"]).strip().upper() == cliente_norm and
+                        produto_norm in str(b["produto"]).strip().upper()):
+                        bloco = b
+                        break
+
+                if not bloco:
+                    QMessageBox.warning(dlg, "Não encontrado",
+                        f"Bloco não encontrado para:\nCliente: {cliente}\nPedido: {pedido}")
+                    return
+
+                data  = str(dados.get("Data Apresentação", "")).upper()
+                placa = str(dados.get("Cavalo", "")).upper()
+                peso  = str(dados.get("Peso", "")).upper()
+                st    = combo_st.currentText().upper()
+
+                gravar_carregamento(conta, bloco, data, placa, peso, st)
+                dlg.accept()
+                QMessageBox.information(self, "Sucesso", "Registrado na planilha com sucesso!")
+
+            except Exception as e:
+                QMessageBox.critical(dlg, "Erro", str(e))
+
+        bc.clicked.connect(dlg.reject)
+        bo.clicked.connect(gravar)
+        dlg.exec()
+
     def _on_erro(self, mensagem):
         self.overlay.hide()
         for b in [self.btn1, self.btn2, self.btn3]:
@@ -1439,6 +1630,7 @@ class UI(QWidget):
             texto = caixa.toPlainText().strip()
             if not texto:
                 return
+            self.nova_ordem()
             self._preencher_campos(parsear_mensagem_whatsapp(texto))
             dlg.accept()
 
@@ -1481,6 +1673,7 @@ class UI(QWidget):
             self.empresa = emp
             cor = ACCENT if emp == "Agrovia" else DANGER
             self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
+            self._atualizar_fundo(emp)
 
     def nova_ordem(self):
         for v in self.entradas.values():

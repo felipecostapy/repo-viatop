@@ -1,0 +1,96 @@
+{
+  "cliente": "JOAO",
+  "cidade": "LEM",
+  "fazenda": "HORTIFUTI",
+  "fabrica": "CHOCOLATE",
+  "pedido": "010101",
+  "produto": "CACAU",
+  "saldo_total": 400.0,
+  "total_carregado": 400.0,
+  "saldo_restante": 0.0,
+  "linhas": [
+    {
+      "data": "04/03/2026",
+      "nota": "138407",
+      "placa": "TPM-4D25",
+      "peso": "40",
+      "frete": "280",
+      "status": "PAGO -10 UNAI"
+    },
+    {
+      "data": "28/02/2026",
+      "nota": "138406",
+      "placa": "CLJ-0296",
+      "peso": "40",
+      "frete": "280",
+      "status": "PAGO -10 UNAI"
+    },
+    {
+      "data": "03/03/2026",
+      "nota": "138556",
+      "placa": "MJD-8D05",
+      "peso": "32",
+      "frete": "280",
+      "status": "PAGO -10 UNAI"
+    },
+    {
+      "data": "04/03/2026",
+      "nota": "138758",
+      "placa": "OQB-2J83",
+      "peso": "50",
+      "frete": "280",
+      "status": "PAGO -10 UNAI"
+    },
+    {
+      "data": "04/03/2026",
+      "nota": "138649",
+      "placa": "SCF-1C94",
+      "peso": "38",
+      "frete": "280",
+      "status": "PAGO -10 UNAI"
+    },
+    {
+      "data": "04/03/206",
+      "nota": "138847",
+      "placa": "SXV-2D12",
+      "peso": "50",
+      "frete": "280",
+      "status": "PAGO -10 UNAI"
+    },
+    {
+      "data": "04/03/2026",
+      "nota": "138965",
+      "placa": "AEX-9I96",
+      "peso": "50",
+      "frete": "280",
+      "status": "PAGO -10 UNAI"
+    },
+    {
+      "data": "05/03/2026",
+      "nota": "138891",
+      "placa": "HIJ-9J89",
+      "peso": "40",
+      "frete": "280",
+      "status": "CARREGADO"
+    },
+    {
+      "data": "06/03/2026",
+      "nota": "138974",
+      "placa": "TBN-1C71",
+      "peso": "40",
+      "frete": "280",
+      "status": "CARREGADO"
+    },
+    {
+      "data": "25/03/2026",
+      "nota": "",
+      "placa": "111-1111",
+      "peso": "20",
+      "frete": "",
+      "status": "NÃO CARREGADO"
+    }
+  ],
+  "col": 7,
+  "linha_total": 12,
+  "num_linhas_dados": 10
+}
