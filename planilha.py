@@ -288,8 +288,8 @@ def _get_sheet_id(service):
     raise Exception(f"Aba '{ABA}' não encontrada.")
 
 
-BASE_ID  = "1WTtmpcCZ1xSJu3vW2xfPu8sP49T93jju"
-BASE_ABA = "BASE"
+BASE_ID  = "1y9blepnFkYoVrUNnUhdwxybUIlhaSw_ADaGGbT4RWPs"
+BASE_ABA = "BASE 03/2026"
 
 def carregar_base(conta):
     service = _autenticar(conta)
@@ -306,10 +306,19 @@ def carregar_base(conta):
         return []
 
     dados = []
+    header_found = False
     for i, linha in enumerate(valores[1:], 2):
-        while len(linha) < 12:
+        while len(linha) < 17:
             linha.append("")
-        row = list(linha[:12]) + [i]  # índice 12 = número da linha na planilha
+        if not header_found:
+            if str(linha[0]).strip().upper() == "DATA":
+                header_found = True
+            continue
+        data    = str(linha[0]).strip()
+        pagador = str(linha[2]).strip()
+        if not data or not pagador:
+            continue
+        row = list(linha[:17]) + [i]
         dados.append(row)
 
     return dados
@@ -328,9 +337,9 @@ def carregar_base_com_linhas(conta):
     valores = resp.get("values", [])
     resultado = []
     for i, linha in enumerate(valores[1:], 2):
-        while len(linha) < 12:
+        while len(linha) < 17:
             linha.append("")
-        resultado.append((i, linha[:12]))
+        resultado.append((i, linha[:17]))
     return resultado
 
 
@@ -338,7 +347,7 @@ def atualizar_linha_base(conta, num_linha, novos_dados):
     service = _autenticar(conta)
     sheet   = service.spreadsheets()
 
-    col_fim = chr(64 + len(novos_dados)) if len(novos_dados) <= 26 else "L"
+    col_fim = chr(64 + len(novos_dados)) if len(novos_dados) <= 26 else "Q"
     rng = f"'{BASE_ABA}'!A{num_linha}:{col_fim}{num_linha}"
 
     sheet.values().update(
@@ -505,4 +514,105 @@ def atualizar_saldo_dados(conta, cliente, pedido, produto, novo_saldo):
             "valueInputOption": "USER_ENTERED",
             "data": requests,
         }
+    ).execute()
+
+
+def atualizar_status_base(conta, num_linha, novo_status):
+    service = _autenticar(conta)
+    sheet   = service.spreadsheets()
+    # STATUS é a coluna O (15ª coluna = índice 14)
+    rng = f"'{BASE_ABA}'!O{num_linha}"
+    sheet.values().update(
+        spreadsheetId=BASE_ID,
+        range=rng,
+        valueInputOption="USER_ENTERED",
+        body={"values": [[novo_status]]},
+    ).execute()
+
+
+def gravar_ordem_dupla(conta, dados_ordem, filial, status="CONFERIDO"):
+    service = _autenticar(conta)
+
+    # ── 1. FRETES (BASE) ──────────────────────────────
+    sheet_id_base = _get_base_sheet_id(service)
+    ultima_base   = _ultima_linha_base(service)
+
+    data         = str(dados_ordem.get("Data Apresentação", "")).upper()
+    motorista    = str(dados_ordem.get("Motorista", "")).upper()
+    placa        = str(dados_ordem.get("Cavalo", "")).upper()
+    fabrica      = str(dados_ordem.get("Fábrica", "")).upper()
+    destino      = str(dados_ordem.get("Destino", "")).upper()
+    pedido       = str(dados_ordem.get("Pedido", "")).upper()
+    produto      = str(dados_ordem.get("Produto", "")).upper()
+    peso         = str(dados_ordem.get("Peso", "")).upper()
+    pagador      = str(dados_ordem.get("Cliente", "")).upper()
+    agencia      = str(dados_ordem.get("Agência", filial)).upper()
+    uf           = str(dados_ordem.get("UF", "")).upper()
+    frete_emp    = str(dados_ordem.get("Frete/Emp", "")).upper()
+    frete_mot    = str(dados_ordem.get("Frete/Mot", "")).upper()
+    rota         = str(dados_ordem.get("Rota", "")).upper()
+    agenciamento = str(dados_ordem.get("Agenciamento", "")).upper()
+
+    linha_fretes = [
+        data, filial, pagador, agencia, motorista,
+        placa, fabrica, destino, uf, peso,
+        frete_emp, frete_mot, rota, agenciamento, status, pedido, produto
+    ]
+
+    _inserir_linha_base(service, sheet_id_base, ultima_base, linha_fretes)
+
+    # ── 2. DADOS (saldo) ──────────────────────────────
+    cliente = pagador
+    try:
+        peso_num = float(peso.replace(",", "."))
+    except Exception:
+        peso_num = 0
+
+    if peso_num > 0:
+        gravar_carregamento_dados(
+            conta, destino, cliente, pedido, produto,
+            data, placa, peso, frete_emp, status
+        )
+
+
+def _get_base_sheet_id(service):
+    meta = service.spreadsheets().get(spreadsheetId=BASE_ID).execute()
+    for s in meta["sheets"]:
+        if s["properties"]["title"] == BASE_ABA:
+            return s["properties"]["sheetId"]
+    raise Exception(f"Aba '{BASE_ABA}' não encontrada.")
+
+
+def _ultima_linha_base(service):
+    resp = service.spreadsheets().values().get(
+        spreadsheetId=BASE_ID,
+        range=f"'{BASE_ABA}'!A:A",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+    return len(resp.get("values", []))
+
+
+def _inserir_linha_base(service, sheet_id, linha_idx, valores):
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=BASE_ID,
+        body={"requests": [{
+            "insertDimension": {
+                "range": {
+                    "sheetId":    sheet_id,
+                    "dimension":  "ROWS",
+                    "startIndex": linha_idx,
+                    "endIndex":   linha_idx + 1,
+                },
+                "inheritFromBefore": True,
+            }
+        }]}
+    ).execute()
+
+    col_fim = _col_letra(len(valores))
+    rng = f"'{BASE_ABA}'!A{linha_idx + 1}:{col_fim}{linha_idx + 1}"
+    service.spreadsheets().values().update(
+        spreadsheetId=BASE_ID,
+        range=rng,
+        valueInputOption="USER_ENTERED",
+        body={"values": [valores]},
     ).execute()

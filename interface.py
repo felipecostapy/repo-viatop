@@ -52,21 +52,20 @@ DIALOG_SS = f"""
 """
 
 def make_field(label_text, widget):
-                                                            
     w = QWidget()
     w.setStyleSheet("background: transparent;")
     v = QVBoxLayout(w)
     v.setContentsMargins(0, 0, 0, 0)
-    v.setSpacing(4)
+    v.setSpacing(1)
     lbl = QLabel(label_text.upper())
-    lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+    lbl.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
     v.addWidget(lbl)
     v.addWidget(widget)
     return w
 
 def make_input(placeholder="", maiusculo=True, max_len=None):
     inp = QLineEdit()
-    inp.setMinimumHeight(36)
+    inp.setMinimumHeight(32)
     inp.setPlaceholderText(placeholder)
     if max_len:
         inp.setMaxLength(max_len)
@@ -78,7 +77,7 @@ def make_combo(items):
     cb = QComboBox()
     cb.setEditable(True)
     cb.addItems(items)
-    cb.setMinimumHeight(36)
+    cb.setMinimumHeight(32)
     cb.setCompleter(QCompleter(items))
     cb.completer().setCaseSensitivity(Qt.CaseInsensitive)
     return cb
@@ -88,7 +87,7 @@ def make_date():
     d.setDisplayFormat("dd/MM/yyyy")
     d.setDate(QDate.currentDate())
     d.setCalendarPopup(True)
-    d.setMinimumHeight(36)
+    d.setMinimumHeight(32)
     return d
 
 def _forcar_maiusculo(inp, texto):
@@ -121,24 +120,24 @@ def make_card(title):
         }}
     """)
     vbox = QVBoxLayout(frame)
-    vbox.setContentsMargins(16, 14, 16, 16)
-    vbox.setSpacing(12)
+    vbox.setContentsMargins(10, 8, 10, 10)
+    vbox.setSpacing(4)
 
     lbl = QLabel(title.upper())
     lbl.setStyleSheet(f"""
         color: {MUTED};
-        font-size: 10px;
+        font-size: 9px;
         font-weight: 700;
         letter-spacing: 1.5px;
         background: transparent;
-        padding-bottom: 4px;
+        padding-bottom: 3px;
         border-bottom: 1px solid {BORDER};
     """)
     vbox.addWidget(lbl)
 
     content = QWidget()
     content.setStyleSheet("background: transparent;")
-    vbox.addWidget(content)
+    vbox.addWidget(content, 1)
 
     return frame, content
 
@@ -919,22 +918,23 @@ class BaseWidget(QWidget):
         """)
         self._tabela.setEditTriggers(QTableWidget.NoEditTriggers)
         self._tabela.setSelectionBehavior(QTableWidget.SelectRows)
-        self._tabela.setAlternatingRowColors(True)
+        self._tabela.setAlternatingRowColors(False)
         self._tabela.verticalHeader().setVisible(False)
         self._tabela.horizontalHeader().setStretchLastSection(True)
         self._tabela.setSortingEnabled(True)
 
-        COLUNAS = ["DATA", "PAGADOR", "PEDIDO", "PRODUTO", "EMBALAGEM",
-                   "PESO", "FRETE/EMP", "PLACA", "ORIGEM", "DESTINO", "UF", "STATUS", "", ""]
+        # Colunas visíveis: DATA(0), FILIAL(1), PAGADOR(2), MOTORISTA(4), PLACA(5),
+        #                   DESTINO(7), UF(8), PESO(9), STATUS(14)
+        self._colunas_visiveis = [0, 1, 2, 4, 5, 7, 8, 9, 14]
+        COLUNAS = ["DATA", "FILIAL", "PAGADOR", "MOTORISTA", "PLACA",
+                   "DESTINO", "UF", "PESO", "STATUS", "", ""]
         self._tabela.setColumnCount(len(COLUNAS))
         self._tabela.setHorizontalHeaderLabels(COLUNAS)
 
-        larguras = [90, 130, 80, 130, 90, 60, 80, 90, 120, 120, 40, 120, 50, 50]
+        larguras = [90, 70, 130, 120, 90, 120, 40, 60, 110, 50, 50]
         for i, w in enumerate(larguras):
             self._tabela.setColumnWidth(i, w)
         self._tabela.horizontalHeader().setStretchLastSection(False)
-        self._tabela.setColumnWidth(12, 50)
-        self._tabela.setColumnWidth(13, 50)
 
         root.addWidget(self._tabela)
 
@@ -994,10 +994,10 @@ class BaseWidget(QWidget):
             self._tabela.insertRow(r)
             self._tabela.setRowHeight(r, 28)
 
-            if len(linha) > 12:
-                self._row_to_linha_planilha[r] = linha[12]
+            if len(linha) > 17:
+                self._row_to_linha_planilha[r] = linha[17]
 
-            status = str(linha[11] if len(linha) > 11 else "").upper()
+            status = str(linha[14] if len(linha) > 14 else "").upper()
             if "CARREGADO" in status and "NÃO" not in status:
                 bg = QColor(COR_CARR)
             elif "NÃO" in status or "NAO" in status:
@@ -1009,15 +1009,16 @@ class BaseWidget(QWidget):
             else:
                 bg = None
 
-            for c, val in enumerate(linha[:12]):
+            for col_tabela, col_dados in enumerate(self._colunas_visiveis):
+                val = linha[col_dados] if col_dados < len(linha) else ""
                 item = QTableWidgetItem(str(val) if val is not None else "")
                 item.setTextAlignment(Qt.AlignCenter)
                 if bg:
                     item.setBackground(bg)
-                self._tabela.setItem(r, c, item)
+                self._tabela.setItem(r, col_tabela, item)
 
-            self._tabela.setItem(r, 12, self._make_btn_item("EDIT", "#e3b341"))
-            self._tabela.setItem(r, 13, self._make_btn_item("DEL",  "#da3633"))
+            self._tabela.setItem(r, 9,  self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(r, 10, self._make_btn_item("DEL",  "#da3633"))
 
         self._tabela.setSortingEnabled(True)
         try:
@@ -1039,11 +1040,11 @@ class BaseWidget(QWidget):
     def _on_item_click(self, item):
         col = item.column()
         row = item.row()
-        if col == 12:
-            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(12)]
+        if col == 9:
+            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(9)]
             self._toggle_edicao(row, dados)
-        elif col == 13:
-            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(12)]
+        elif col == 10:
+            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(9)]
             self._deletar_linha(row, dados)
 
     def _toggle_edicao(self, row, dados_orig):
@@ -1056,7 +1057,8 @@ class BaseWidget(QWidget):
 
         STATUS_OPTS = ["MARCADO", "CHEGA", "CARREGADO", "AGUARDANDO", "DESCARGA"]
 
-        for c in range(11):
+        # Edita colunas 0-7 (DATA até PESO), STATUS fica como combo na col 8
+        for c in range(8):
             val = str(dados_orig[c]) if c < len(dados_orig) else ""
             inp = QLineEdit(val)
             inp.setAlignment(Qt.AlignCenter)
@@ -1075,7 +1077,7 @@ class BaseWidget(QWidget):
 
         combo = QComboBox()
         combo.addItems(STATUS_OPTS)
-        status_atual = str(dados_orig[11]) if len(dados_orig) > 11 else ""
+        status_atual = str(dados_orig[8]) if len(dados_orig) > 8 else ""
         idx = combo.findText(status_atual, Qt.MatchFixedString)
         if idx >= 0:
             combo.setCurrentIndex(idx)
@@ -1096,47 +1098,48 @@ class BaseWidget(QWidget):
                 width: 0; height: 0; margin-right: 4px;
             }}
         """)
-        self._tabela.setCellWidget(row, 11, combo)
+        self._tabela.setCellWidget(row, 8, combo)
 
-        self._tabela.setItem(row, 12, self._make_btn_item("OK", "#2ea043"))
+        self._tabela.setItem(row, 9, self._make_btn_item("OK", "#2ea043"))
 
     def _salvar_edicao(self, row, dados_orig):
         conta = self._combo_conta.currentText()
         novos = []
-        for c in range(11):
+        novos_visiveis = []
+        for c in range(8):
             w = self._tabela.cellWidget(row, c)
-            novos.append(w.text() if isinstance(w, QLineEdit) else (self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""))
-        combo = self._tabela.cellWidget(row, 11)
-        novos.append(combo.currentText() if isinstance(combo, QComboBox) else "")
+            novos_visiveis.append(w.text() if isinstance(w, QLineEdit) else (self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""))
+        combo = self._tabela.cellWidget(row, 8)
+        novos_visiveis.append(combo.currentText() if isinstance(combo, QComboBox) else "")
 
         try:
-            from planilha import atualizar_linha_base
+            from planilha import atualizar_status_base
             num_linha = self._row_to_linha_planilha.get(row) or self._encontrar_linha_base(dados_orig, conta)
             if num_linha:
-                atualizar_linha_base(conta, num_linha, novos)
+                # Só atualiza STATUS (coluna 14 da planilha, índice 8 dos visíveis)
+                atualizar_status_base(conta, num_linha, novos_visiveis[8])
             else:
                 QMessageBox.warning(self, "Aviso", "Linha não encontrada na planilha.")
                 return
 
             STATUS_OPTS_COR = {
                 "CARREGADO": "#1a3a1a", "NÃO CARREGADO": "#3a1a1a",
-                "PAGO": "#1a2a3a", "MARCADO": "#3a2a00"
+                "PAGO": "#1a2a3a", "MARCADO": "#3a2a00",
+                "CHEGA": "#1a2a3a", "AGUARDANDO": "#2a2a00",
+                "DESCARGA": "#2a1a3a",
             }
-            status = novos[11].upper()
+            status = novos_visiveis[8].upper()
             bg = QColor(STATUS_OPTS_COR.get(status, "#161b22"))
 
-            for c in range(11):
+            for c in range(9):
                 self._tabela.removeCellWidget(row, c)
-            self._tabela.removeCellWidget(row, 11)
-
-            for c in range(12):
-                item = QTableWidgetItem(novos[c])
+                item = QTableWidgetItem(novos_visiveis[c] if c < len(novos_visiveis) else "")
                 item.setTextAlignment(Qt.AlignCenter)
                 item.setBackground(bg)
                 self._tabela.setItem(row, c, item)
 
-            self._tabela.setItem(row, 12, self._make_btn_item("EDIT", "#e3b341"))
-            self._tabela.setItem(row, 13, self._make_btn_item("DEL",  "#da3633"))
+            self._tabela.setItem(row, 9,  self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(row, 10, self._make_btn_item("DEL",  "#da3633"))
 
             self._linhas_editando.pop(row, None)
             self._tabela.setRowHeight(row, 28)
@@ -1204,6 +1207,31 @@ def parsear_mensagem_whatsapp(texto):
     resultado["Motorista"] = extrair("MOTORISTA")
     resultado["Cavalo"]    = extrair("PLACA")
     resultado["Peso"]      = extrair("PESO")
+
+    # Campos extras para planilha
+    agencia = extrair("AGÊNCIA") or extrair("AGENCIA")
+    if agencia:
+        resultado["Agência"] = agencia
+
+    frete_emp = extrair("FRETE/EMP")
+    if frete_emp:
+        resultado["Frete/Emp"] = frete_emp
+
+    frete_mot = extrair("FRETE/MOT")
+    if frete_mot:
+        resultado["Frete/Mot"] = frete_mot
+
+    rota = extrair("ROTA")
+    if rota:
+        resultado["Rota"] = rota
+
+    agenciamento = extrair("AGENCIAMENTO")
+    if agenciamento:
+        resultado["Agenciamento"] = agenciamento
+
+    uf_campo = extrair("UF").upper()
+    if uf_campo:
+        resultado["UF"] = uf_campo
 
     produto = extrair("PRODUTO")
     resultado["Produto"] = produto
@@ -1557,44 +1585,52 @@ class UI(QWidget):
         container = QWidget()
         container.setStyleSheet("background: transparent;")
         inner = QVBoxLayout(container)
-        inner.setContentsMargins(16, 16, 16, 16)
-        inner.setSpacing(10)
+        inner.setContentsMargins(8, 8, 8, 8)
+        inner.setSpacing(6)
 
+        # ── LINHA 1: Cabeçalho | Motorista | Veículo ─────
         row1 = QHBoxLayout()
-        row1.setSpacing(10)
+        row1.setSpacing(8)
         row1.setAlignment(Qt.AlignTop)
 
         cab = self._build_cabecalho()
         cab.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         mot = self._build_motorista()
         mot.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        vei = self._build_veiculo()
+        vei.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
-        row1.addWidget(cab, 3)
-        row1.addWidget(mot, 2)
+        row1.addWidget(cab, 4)
+        row1.addWidget(mot, 3)
+        row1.addWidget(vei, 3)
         inner.addLayout(row1)
 
+        # ── LINHA 2: Carga | Dados Planilha | Assinatura+Botões ─
         row2 = QHBoxLayout()
-        row2.setSpacing(10)
+        row2.setSpacing(8)
         row2.setAlignment(Qt.AlignTop)
 
         car = self._build_carga()
         car.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        vei = self._build_veiculo()
-        vei.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        extra = self._build_dados_planilha()
+        extra.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
-        row2.addWidget(car, 3)
-        row2.addWidget(vei, 2)
-        inner.addLayout(row2)
-
-        row3 = QHBoxLayout()
-        row3.setSpacing(10)
-        row3.setAlignment(Qt.AlignTop)
-
+        col3_w = QWidget()
+        col3_w.setStyleSheet("background: transparent;")
+        col3_w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        col3 = QVBoxLayout(col3_w)
+        col3.setSpacing(8)
+        col3.setContentsMargins(0, 0, 0, 0)
         ass = self._build_assinatura()
         ass.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-        row3.addWidget(ass, 3)
-        row3.addLayout(self._build_botoes(), 2)
-        inner.addLayout(row3)
+        col3.addWidget(ass)
+        col3.addLayout(self._build_botoes())
+        col3.addStretch()
+
+        row2.addWidget(car, 4)
+        row2.addWidget(extra, 3)
+        row2.addWidget(col3_w, 3)
+        inner.addLayout(row2)
 
         inner.addStretch()
 
@@ -1605,10 +1641,11 @@ class UI(QWidget):
     def _build_cabecalho(self):
         frame, content = make_card("Cabeçalho")
         v = QVBoxLayout(content)
-        v.setSpacing(8)
+        v.setSpacing(5)
         v.setContentsMargins(0, 0, 0, 0)
+        v.setAlignment(Qt.AlignTop)
 
-        r1 = QHBoxLayout(); r1.setSpacing(8)
+        r1 = QHBoxLayout(); r1.setSpacing(6)
         self.entradas["Data Apresentação"] = make_date()
         self.entradas["Fábrica"]    = make_input()
         self.entradas["Solicitante"] = make_input()
@@ -1629,7 +1666,7 @@ class UI(QWidget):
 
         self.entradas["Fábrica"].textChanged.connect(_atualizar_origem)
 
-        r2 = QHBoxLayout(); r2.setSpacing(8)
+        r2 = QHBoxLayout(); r2.setSpacing(6)
         self.entradas["Origem"]  = make_input()
         self.entradas["Destino"] = make_input()
         self.entradas["Cliente"] = make_input()
@@ -1646,34 +1683,38 @@ class UI(QWidget):
     def _build_motorista(self):
         frame, content = make_card("Motorista")
         v = QVBoxLayout(content)
-        v.setSpacing(8)
+        v.setSpacing(5)
         v.setContentsMargins(0, 0, 0, 0)
+        v.setAlignment(Qt.AlignTop)
 
         self.entradas["Motorista"] = make_input()
         v.addWidget(make_field("Nome", self.entradas["Motorista"]))
 
-        r = QHBoxLayout(); r.setSpacing(8)
+        r = QHBoxLayout(); r.setSpacing(6)
         self.entradas["CPF"]     = make_input(maiusculo=False)
         self.entradas["Contato"] = make_input(maiusculo=False)
         r.addWidget(make_field("CPF", self.entradas["CPF"]), 1)
         r.addWidget(make_field("Contato", self.entradas["Contato"]), 1)
         v.addLayout(r)
-        v.addStretch()
+        v.addStretch(1)
 
         return frame
 
     def _build_carga(self):
         frame, content = make_card("Carga")
         v = QVBoxLayout(content)
-        v.setSpacing(6)
+        v.setSpacing(3)
         v.setContentsMargins(0, 0, 0, 0)
 
-        header = QHBoxLayout(); header.setSpacing(8)
+        hdr = QHBoxLayout()
+        hdr.setSpacing(4)
+        hdr.setContentsMargins(0, 0, 0, 0)
         for txt, stretch in [("Pedido", 3), ("Produto", 3), ("Peso", 1), ("Embalagem", 2)]:
             lbl = QLabel(txt.upper())
-            lbl.setStyleSheet(f"color: #444d56; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
-            header.addWidget(lbl, stretch)
-        v.addLayout(header)
+            lbl.setStyleSheet("color: #555d66; font-size: 9px; font-weight: 700; background: transparent;")
+            hdr.addWidget(lbl, stretch)
+        hdr.addSpacing(26)
+        v.addLayout(hdr)
 
         self._carga_container = QWidget()
         self._carga_container.setStyleSheet("background: transparent;")
@@ -1681,23 +1722,22 @@ class UI(QWidget):
         self._carga_vbox.setSpacing(6)
         self._carga_vbox.setContentsMargins(0, 0, 0, 0)
         v.addWidget(self._carga_container)
+        v.addStretch()
 
-        self.btn_add_pedido = QPushButton("＋  ADICIONAR PEDIDO")
-        self.btn_add_pedido.setObjectName("btn_add_pedido")
-        self.btn_add_pedido.setMinimumHeight(32)
-        self.btn_add_pedido.clicked.connect(self._adicionar_linha_pedido)
-        v.addWidget(self.btn_add_pedido)
+        # Cria 4 linhas: primeira ativa, demais como botão
+        for i in range(4):
+            self._adicionar_linha_pedido(ativa=(i == 0))
 
-        self._adicionar_linha_pedido()
         return frame
 
     def _build_veiculo(self):
         frame, content = make_card("Veículo")
         v = QVBoxLayout(content)
-        v.setSpacing(8)
+        v.setSpacing(5)
         v.setContentsMargins(0, 0, 0, 0)
+        v.setAlignment(Qt.AlignTop)
 
-        r1 = QHBoxLayout(); r1.setSpacing(8)
+        r1 = QHBoxLayout(); r1.setSpacing(6)
         self.entradas["Carroceria"] = make_combo(["Graneleiro", "Basculante", "Baú", "Sider", "Tanque"])
         self.entradas["Carroceria"].setCurrentIndex(-1)
         self.entradas["Carroceria"].lineEdit().setPlaceholderText("Selecione...")
@@ -1707,7 +1747,7 @@ class UI(QWidget):
         r1.addWidget(make_field("Cavalo", self.entradas["Cavalo"]), 1)
         v.addLayout(r1)
 
-        r2 = QHBoxLayout(); r2.setSpacing(8)
+        r2 = QHBoxLayout(); r2.setSpacing(6)
         self.entradas["Carreta 1"] = make_input()
         self.entradas["Carreta 2"] = make_input()
         r2.addWidget(make_field("Carreta 1", self.entradas["Carreta 1"]))
@@ -1720,14 +1760,42 @@ class UI(QWidget):
 
         return frame
 
+    def _build_dados_planilha(self):
+        frame, content = make_card("Dados da Planilha")
+        v = QVBoxLayout(content)
+        v.setSpacing(8)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        r1 = QHBoxLayout(); r1.setSpacing(6)
+        self.entradas["Agência"]   = make_input()
+        self.entradas["UF"]        = make_input()
+        self.entradas["Frete/Emp"] = make_input()
+        self.entradas["Frete/Mot"] = make_input()
+        r1.addWidget(make_field("Agência",   self.entradas["Agência"]),   3)
+        r1.addWidget(make_field("UF",        self.entradas["UF"]),        1)
+        r1.addWidget(make_field("Frete/Emp", self.entradas["Frete/Emp"]), 2)
+        r1.addWidget(make_field("Frete/Mot", self.entradas["Frete/Mot"]), 2)
+        v.addLayout(r1)
+
+        r2 = QHBoxLayout(); r2.setSpacing(6)
+        self.entradas["Rota"]         = make_input()
+        self.entradas["Agenciamento"] = make_input()
+        r2.addWidget(make_field("Rota",         self.entradas["Rota"]),         1)
+        r2.addWidget(make_field("Agenciamento", self.entradas["Agenciamento"]), 1)
+        v.addLayout(r2)
+
+        v.addStretch()
+        return frame
+
     def _build_assinatura(self):
         frame, content = make_card("Assinatura")
         v = QVBoxLayout(content)
-        v.setSpacing(6)
+        v.setSpacing(4)
         v.setContentsMargins(0, 0, 0, 0)
+        v.setAlignment(Qt.AlignTop)
 
         self.entradas["Assinatura"] = make_input(maiusculo=False)
-        self.entradas["Assinatura"].setMinimumHeight(40)
+        self.entradas["Assinatura"].setMinimumHeight(32)
         v.addWidget(self.entradas["Assinatura"])
 
         dev = QLabel("© 2026 dev by Felipe")
@@ -1740,7 +1808,7 @@ class UI(QWidget):
 
     def _build_botoes(self):
         v = QVBoxLayout()
-        v.setSpacing(8)
+        v.setSpacing(5)
 
         self.btn_wpp = QPushButton("📋  IMPORTAR WHATSAPP")
         self.btn_wpp.setObjectName("btn_wpp")
@@ -1755,7 +1823,7 @@ class UI(QWidget):
         self.btn3.setObjectName("btn_nova")
 
         for btn in [self.btn_wpp, self.btn1, self.btn2, self.btn3]:
-            btn.setMinimumHeight(44)
+            btn.setMinimumHeight(40)
             v.addWidget(btn)
 
         v.addStretch()
@@ -1767,7 +1835,7 @@ class UI(QWidget):
 
         return v
 
-    def _adicionar_linha_pedido(self):
+    def _adicionar_linha_pedido(self, ativa=True):
         MAX = 4
         if len(self._pedido_linhas) >= MAX:
             return
@@ -1775,13 +1843,37 @@ class UI(QWidget):
         idx    = len(self._pedido_linhas)
         sufixo = f" {idx + 1}" if idx > 0 else ""
 
+        EMBALAGENS = ["BIG BAG", "SACO 50KG", "SACO 25KG", "SACO 40KG", "GRANEL", "PALETIZADO"]
+
         row_w = QWidget()
         row_w.setStyleSheet("background: transparent;")
-        row_h = QHBoxLayout(row_w)
-        row_h.setContentsMargins(0, 0, 0, 0)
-        row_h.setSpacing(8)
+        row_w.setFixedHeight(32)
+        outer = QVBoxLayout(row_w)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
-        EMBALAGENS = ["BIG BAG", "SACO 50KG", "SACO 25KG", "SACO 40KG", "GRANEL", "PALETIZADO"]
+        # ── Botão inativo ──
+        btn_ativar = QPushButton(f"＋  Pedido {idx + 1}")
+        btn_ativar.setFixedHeight(30)
+        btn_ativar.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px dashed {BORDER2};
+                border-radius: 6px;
+                color: {MUTED};
+                font-size: 11px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{ border-color: {ACCENT}; color: {ACCENT}; }}
+        """)
+        outer.addWidget(btn_ativar)
+
+        # ── Inputs ativos ──
+        inp_w = QWidget()
+        inp_w.setStyleSheet("background: transparent;")
+        inp_lay = QHBoxLayout(inp_w)
+        inp_lay.setContentsMargins(0, 0, 0, 0)
+        inp_lay.setSpacing(4)
 
         linha = {}
         for chave, stretch in [("Pedido", 3), ("Produto", 3), ("Peso", 1), ("Embalagem", 2)]:
@@ -1794,45 +1886,57 @@ class UI(QWidget):
                 comp = QCompleter(EMBALAGENS)
                 comp.setCaseSensitivity(Qt.CaseInsensitive)
                 inp.setCompleter(comp)
-                inp.setMinimumHeight(34)
+                inp.setFixedHeight(30)
+                inp.setStyleSheet("QComboBox { padding: 2px 6px; font-size: 12px; }")
             else:
                 inp = QLineEdit()
-                inp.setMinimumHeight(34)
+                inp.setFixedHeight(30)
+                inp.setStyleSheet("QLineEdit { padding: 2px 6px; font-size: 12px; }")
                 inp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
-            row_h.addWidget(inp, stretch)
+            inp_lay.addWidget(inp, stretch)
             nome = chave + sufixo
             linha[nome] = inp
             self.entradas[nome] = inp
 
         btn_del = QPushButton("×")
-        btn_del.setFixedSize(28, 34)
+        btn_del.setFixedSize(24, 30)
         btn_del.setStyleSheet(f"""
             QPushButton {{
-                background-color: transparent;
-                border: 1px solid #30363d;
-                border-radius: 6px;
-                color: #8b949e;
-                font-size: 16px;
-                font-weight: bold;
-                padding: 0;
+                background: transparent; border: 1px solid #30363d;
+                border-radius: 4px; color: #8b949e;
+                font-size: 14px; font-weight: bold; padding: 0;
             }}
-            QPushButton:hover {{
-                background-color: #da363320;
-                border-color: #da3633;
-                color: #f85149;
-            }}
+            QPushButton:hover {{ background: #da363320; border-color: #da3633; color: #f85149; }}
         """)
-        if idx == 0:
-            btn_del.setVisible(False)
-        btn_del.clicked.connect(lambda _, rw=row_w, ln=linha: self._deletar_linha_pedido(rw, ln))
-        row_h.addWidget(btn_del)
+        inp_lay.addWidget(btn_del)
+        outer.addWidget(inp_w)
+
+        # Conecta botões
+        btn_ativar.clicked.connect(lambda _, b=btn_ativar, iw=inp_w: (b.hide(), iw.show()))
+        btn_del.clicked.connect(lambda _, b=btn_ativar, iw=inp_w, ln=linha: (
+            [inp.clear() if isinstance(inp, QLineEdit) else inp.setCurrentIndex(-1) for inp in ln.values()],
+            iw.hide(), b.show()
+        ))
+
+        # Estado inicial
+        if ativa:
+            btn_ativar.hide()
+            inp_w.show()
+        else:
+            btn_ativar.show()
+            inp_w.hide()
 
         self._pedido_linhas.append((row_w, linha))
         self._carga_vbox.addWidget(row_w)
 
-        if len(self._pedido_linhas) >= MAX:
-            self.btn_add_pedido.hide()
+    def _desativar_linha_pedido(self, row_w, row_stack, linha):
+        for inp in linha.values():
+            if isinstance(inp, QLineEdit):
+                inp.clear()
+            elif isinstance(inp, QComboBox):
+                inp.setCurrentIndex(-1)
+        row_stack.setCurrentIndex(0)
 
     def _atualizar_fundo(self, empresa):
         base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
@@ -2039,7 +2143,7 @@ class UI(QWidget):
         lay.setSpacing(8)
 
         lay.addWidget(QLabel("DESTINATÁRIO"))
-        inp_d = QLineEdit(destinatario); inp_d.setMinimumHeight(36)
+        inp_d = QLineEdit(destinatario); inp_d.setMinimumHeight(32)
         lay.addWidget(inp_d)
 
         lay.addWidget(QLabel("ASSUNTO"))
@@ -2134,22 +2238,12 @@ class UI(QWidget):
 
         def gravar():
             try:
-                from planilha import gravar_carregamento_dados
-                data    = str(dados.get("Data Apresentação", "")).upper()
-                placa   = str(dados.get("Cavalo", "")).upper()
-                peso    = str(dados.get("Peso", "")).upper()
-                frete   = str(dados.get("Frete/EMP", "")).upper()
-                st      = combo_st.currentText().upper()
-                destino = str(dados.get("Destino", "")).upper()
-                produto_val = str(dados.get("Produto", "")).upper()
-
-                gravar_carregamento_dados(
-                    conta, destino, cliente, pedido, produto_val,
-                    data, placa, peso, frete, st
-                )
+                from planilha import gravar_ordem_dupla
+                filial = self.empresa if self.empresa else "AGROVIA"
+                st     = combo_st.currentText().upper()
+                gravar_ordem_dupla(conta, dados, filial, st)
                 dlg.accept()
-                QMessageBox.information(self, "Sucesso", "Registrado na planilha com sucesso!")
-
+                QMessageBox.information(self, "Sucesso", "Registrado nas duas planilhas com sucesso!")
             except Exception as e:
                 QMessageBox.critical(dlg, "Erro", str(e))
 
@@ -2204,7 +2298,9 @@ class UI(QWidget):
             self._adicionar_linha_pedido()
 
         campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
-                          "Destino", "Motorista", "Cavalo", "Solicitante"]
+                          "Destino", "Motorista", "Cavalo", "Solicitante",
+                          "Agência", "UF", "Frete/Emp", "Frete/Mot",
+                          "Rota", "Agenciamento"]
         for campo in campos_simples:
             valor = dados.get(campo, "")
             if not valor:
@@ -2240,18 +2336,31 @@ class UI(QWidget):
             if isinstance(v, QLineEdit):
                 v.clear()
             elif isinstance(v, QComboBox):
-                v.setCurrentIndex(0)
+                v.setCurrentIndex(-1)
             elif isinstance(v, QDateEdit):
                 v.setDate(QDate.currentDate())
 
-        while len(self._pedido_linhas) > 1:
-            row_w, linha = self._pedido_linhas.pop()
-            self._carga_vbox.removeWidget(row_w)
-            row_w.deleteLater()
-            for chave in linha:
-                self.entradas.pop(chave, None)
+        # Reseta linhas: primeira ativa, demais volta para botão
+        for i, (row_w, linha) in enumerate(self._pedido_linhas):
+            btn = row_w.findChild(QPushButton, "")
+            btns = [c for c in row_w.findChildren(QPushButton)]
+            inps_w = [c for c in row_w.findChildren(QWidget) if c.layout() and isinstance(c.layout(), QHBoxLayout)]
+            # Limpa campos
+            for inp in linha.values():
+                if isinstance(inp, QLineEdit):
+                    inp.clear()
+                elif isinstance(inp, QComboBox):
+                    inp.setCurrentIndex(-1)
+            # Mostra/esconde via filhos diretos do outer layout
+            outer_lay = row_w.layout()
+            if outer_lay and outer_lay.count() >= 2:
+                btn_item = outer_lay.itemAt(0).widget()
+                inp_item = outer_lay.itemAt(1).widget()
+                if i == 0:
+                    btn_item.hide(); inp_item.show()
+                else:
+                    btn_item.show(); inp_item.hide()
 
-        self.btn_add_pedido.show()
         self.escolher_empresa()
         self.setar_data_hoje()
 
