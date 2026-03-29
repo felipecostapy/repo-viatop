@@ -147,6 +147,49 @@ def carregar_blocos(conta):
     return blocos
 
 
+def _formatar_data(valor):
+    """
+    Normaliza datas vindas do Sheets para DD/MM ou DD/MM/AAAA.
+    Trata: '2026-03-02 00:00:00', '2026-03-02', '02/03/2026', '28/01', etc.
+    """
+    import re
+    v = str(valor).strip()
+    if not v:
+        return v
+
+    # Formato datetime completo: 2026-03-02 00:00:00
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})(?:\s.*)?$", v)
+    if m:
+        ano, mes, dia = m.group(1), m.group(2), m.group(3)
+        return f"{dia}/{mes}/{ano}"
+
+    # Formato ISO sem hora: 2026-03-02
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})$", v)
+    if m:
+        ano, mes, dia = m.group(1), m.group(2), m.group(3)
+        return f"{dia}/{mes}/{ano}"
+
+    # Já está no formato DD/MM ou DD/MM/AAAA — retorna como está
+    return v
+
+
+def _formatar_nota(valor):
+    """
+    Remove o .0 de notas gravadas como float (ex: 134594.0 → 134594).
+    """
+    v = str(valor).strip()
+    if not v:
+        return v
+    # Se termina em .0 (ou .00, etc.) e é numérico, remove a parte decimal
+    try:
+        f = float(v)
+        if f == int(f):
+            return str(int(f))
+    except Exception:
+        pass
+    return v
+
+
 def carregar_blocos_dados(conta):
     service = _autenticar(conta)
     sheet   = service.spreadsheets()
@@ -200,8 +243,8 @@ def carregar_blocos_dados(conta):
             }
             ordem.append(key)
 
-        data   = str(linha[5]).strip()
-        nota   = str(linha[6]).strip()
+        data   = _formatar_data(str(linha[5]).strip())
+        nota   = _formatar_nota(str(linha[6]).strip())
         placa  = str(linha[7]).strip()
         peso   = str(linha[8]).strip()
         frete  = str(linha[9]).strip()
@@ -289,15 +332,44 @@ def _get_sheet_id(service):
 
 
 BASE_ID  = "1y9blepnFkYoVrUNnUhdwxybUIlhaSw_ADaGGbT4RWPs"
-BASE_ABA = "BASE 03/2026"
+BASE_ABA = "BASE 03/2026"   # fallback — sobrescrito dinamicamente
 
-def carregar_base(conta):
+
+def listar_abas_base(conta):
+    """Retorna lista de nomes de abas da planilha BASE, ordenadas."""
+    service = _autenticar(conta)
+    meta    = service.spreadsheets().get(spreadsheetId=BASE_ID).execute()
+    abas    = [s["properties"]["title"] for s in meta["sheets"]]
+    return abas
+
+
+def _aba_mais_recente(abas):
+    """
+    Detecta a aba mais recente com padrão 'BASE MM/AAAA'.
+    Fallback: última aba da lista.
+    """
+    import re
+    candidatas = []
+    for nome in abas:
+        m = re.match(r"BASE\s+(\d{2})/(\d{4})", nome.strip(), re.IGNORECASE)
+        if m:
+            mes, ano = int(m.group(1)), int(m.group(2))
+            candidatas.append((ano, mes, nome))
+    if candidatas:
+        candidatas.sort(reverse=True)
+        return candidatas[0][2]
+    return abas[-1] if abas else BASE_ABA
+
+
+def carregar_base(conta, aba=None):
     service = _autenticar(conta)
     sheet   = service.spreadsheets()
 
+    aba_usar = aba or BASE_ABA
+
     resp = sheet.values().get(
         spreadsheetId=BASE_ID,
-        range=f"'{BASE_ABA}'",
+        range=f"'{aba_usar}'",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
 
@@ -324,13 +396,15 @@ def carregar_base(conta):
     return dados
 
 
-def carregar_base_com_linhas(conta):
+def carregar_base_com_linhas(conta, aba=None):
     service = _autenticar(conta)
     sheet   = service.spreadsheets()
 
+    aba_usar = aba or BASE_ABA
+
     resp = sheet.values().get(
         spreadsheetId=BASE_ID,
-        range=f"'{BASE_ABA}'",
+        range=f"'{aba_usar}'",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
 
@@ -343,12 +417,13 @@ def carregar_base_com_linhas(conta):
     return resultado
 
 
-def atualizar_linha_base(conta, num_linha, novos_dados):
-    service = _autenticar(conta)
-    sheet   = service.spreadsheets()
+def atualizar_linha_base(conta, num_linha, novos_dados, aba=None):
+    service  = _autenticar(conta)
+    sheet    = service.spreadsheets()
+    aba_usar = aba or BASE_ABA
 
-    col_fim = chr(64 + len(novos_dados)) if len(novos_dados) <= 26 else "Q"
-    rng = f"'{BASE_ABA}'!A{num_linha}:{col_fim}{num_linha}"
+    col_fim = _col_letra(len(novos_dados))
+    rng = f"'{aba_usar}'!A{num_linha}:{col_fim}{num_linha}"
 
     sheet.values().update(
         spreadsheetId=BASE_ID,
@@ -358,19 +433,20 @@ def atualizar_linha_base(conta, num_linha, novos_dados):
     ).execute()
 
 
-def deletar_linha_base(conta, num_linha):
-    service = _autenticar(conta)
-    sheet   = service.spreadsheets()
+def deletar_linha_base(conta, num_linha, aba=None):
+    service  = _autenticar(conta)
+    sheet    = service.spreadsheets()
+    aba_usar = aba or BASE_ABA
 
     meta = service.spreadsheets().get(spreadsheetId=BASE_ID).execute()
     sheet_id = None
     for s in meta["sheets"]:
-        if s["properties"]["title"] == BASE_ABA:
+        if s["properties"]["title"] == aba_usar:
             sheet_id = s["properties"]["sheetId"]
             break
 
     if sheet_id is None:
-        raise Exception(f"Aba '{BASE_ABA}' não encontrada.")
+        raise Exception(f"Aba '{aba_usar}' não encontrada.")
 
     sheet.batchUpdate(
         spreadsheetId=BASE_ID,
@@ -477,51 +553,95 @@ def _buscar_saldo_total_dados(service, pedido):
     return ""
 
 
-def atualizar_saldo_dados(conta, cliente, pedido, produto, novo_saldo):
+def atualizar_saldo_dados(conta, cliente, pedido, produto, saldo_restante_desejado):
+    """
+    Ajusta o SALDO_TOTAL de todas as linhas do pedido na planilha DADOS.
+
+    O usuário informa o SALDO RESTANTE que quer (ex: 500t).
+    O sistema soma os pesos já carregados e calcula o SALDO_TOTAL real:
+        saldo_total = saldo_restante_desejado + total_ja_carregado
+
+    Assim o cálculo saldo_total - soma(pesos) sempre bate com o valor digitado.
+    Usa fuzzy match nas palavras do cliente e produto para evitar erros de digitação.
+    """
+    import re
+
+    def _normalizar(s):
+        return re.sub(r"\s+", " ", str(s).strip().upper())
+
+    def _palavras_em_comum(a, b):
+        pa = {p for p in _normalizar(a).split() if len(p) > 2}
+        pb = {p for p in _normalizar(b).split() if len(p) > 2}
+        if not pa or not pb:
+            return True
+        menor, maior = (pa, pb) if len(pa) <= len(pb) else (pb, pa)
+        return sum(1 for p in menor if p in maior) / len(menor) >= 0.6
+
     service = _autenticar(conta)
     sheet   = service.spreadsheets()
 
+    # Lê colunas A:I (destino, cliente, pedido, produto, saldo_total, data, nota, placa, peso)
     resp = sheet.values().get(
         spreadsheetId=DADOS_ID,
-        range=f"'{DADOS_ABA}'!A:E",
+        range=f"'{DADOS_ABA}'!A:I",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
 
     valores = resp.get("values", [])
-    linhas_atualizar = []
+    linhas_atualizar   = []
+    total_ja_carregado = 0.0
 
     for i, linha in enumerate(valores[1:], 2):
         if len(linha) < 3:
             continue
-        if (str(linha[1]).strip().upper() == str(cliente).strip().upper() and
-            str(linha[2]).strip() == str(pedido).strip() and
-            str(linha[3]).strip().upper() == str(produto).strip().upper() if len(linha) > 3 else True):
-            linhas_atualizar.append(i)
+
+        ped_plan  = _normalizar(linha[2])
+        cli_plan  = _normalizar(linha[1]) if len(linha) > 1 else ""
+        prod_plan = _normalizar(linha[3]) if len(linha) > 3 else ""
+
+        if ped_plan != _normalizar(pedido):
+            continue
+        if not _palavras_em_comum(produto, prod_plan):
+            continue
+        if not _palavras_em_comum(cliente, cli_plan):
+            continue
+
+        linhas_atualizar.append(i)
+
+        # Soma os pesos já carregados (coluna I, índice 8)
+        if len(linha) > 8 and str(linha[8]).strip():
+            try:
+                total_ja_carregado += float(str(linha[8]).replace(",", "."))
+            except Exception:
+                pass
 
     if not linhas_atualizar:
-        raise Exception(f"Pedido {pedido} do cliente {cliente} não encontrado.")
+        raise Exception(
+            f"Pedido {pedido} — {produto} do cliente {cliente} não encontrado na planilha de saldo."
+        )
 
-    requests = []
-    for num_linha in linhas_atualizar:
-        requests.append({
-            "range": f"'{DADOS_ABA}'!E{num_linha}",
-            "values": [[novo_saldo]],
-        })
+    # saldo_total real = o que o usuário quer de restante + o que já foi carregado
+    saldo_total_real = float(saldo_restante_desejado) + total_ja_carregado
+
+    requests = [
+        {"range": f"'{DADOS_ABA}'!E{n}", "values": [[saldo_total_real]]}
+        for n in linhas_atualizar
+    ]
 
     sheet.values().batchUpdate(
         spreadsheetId=DADOS_ID,
-        body={
-            "valueInputOption": "USER_ENTERED",
-            "data": requests,
-        }
+        body={"valueInputOption": "USER_ENTERED", "data": requests},
     ).execute()
 
+    return saldo_total_real, total_ja_carregado
 
-def atualizar_status_base(conta, num_linha, novo_status):
-    service = _autenticar(conta)
-    sheet   = service.spreadsheets()
+
+def atualizar_status_base(conta, num_linha, novo_status, aba=None):
+    service  = _autenticar(conta)
+    sheet    = service.spreadsheets()
+    aba_usar = aba or BASE_ABA
     # STATUS é a coluna O (15ª coluna = índice 14)
-    rng = f"'{BASE_ABA}'!O{num_linha}"
+    rng = f"'{aba_usar}'!O{num_linha}"
     sheet.values().update(
         spreadsheetId=BASE_ID,
         range=rng,
@@ -530,12 +650,22 @@ def atualizar_status_base(conta, num_linha, novo_status):
     ).execute()
 
 
-def gravar_ordem_dupla(conta, dados_ordem, filial, status="CONFERIDO"):
+def gravar_ordem_dupla(conta, dados_ordem, filial, status="CONFERIDO", aba=None):
+    """
+    Grava a ordem na aba BASE do mês correto e desconta o peso do saldo
+    do pedido na planilha DADOS.
+    aba: nome da aba BASE a usar (ex: 'BASE 04/2026'). Se None, usa a mais recente.
+    """
     service = _autenticar(conta)
 
-    # ── 1. FRETES (BASE) ──────────────────────────────
-    sheet_id_base = _get_base_sheet_id(service)
-    ultima_base   = _ultima_linha_base(service)
+    # Resolve aba: usa a passada, ou detecta a mais recente automaticamente
+    if not aba:
+        abas = listar_abas_base(conta)
+        aba  = _aba_mais_recente(abas)
+
+    # ── 1. BASE (controle de ordens) ──────────────────
+    sheet_id_base = _get_base_sheet_id(service, aba=aba)
+    ultima_base   = _ultima_linha_base(service, aba=aba)
 
     data         = str(dados_ordem.get("Data Apresentação", "")).upper()
     motorista    = str(dados_ordem.get("Motorista", "")).upper()
@@ -559,40 +689,157 @@ def gravar_ordem_dupla(conta, dados_ordem, filial, status="CONFERIDO"):
         frete_emp, frete_mot, rota, agenciamento, status, pedido, produto
     ]
 
-    _inserir_linha_base(service, sheet_id_base, ultima_base, linha_fretes)
+    _inserir_linha_base(service, sheet_id_base, ultima_base, linha_fretes, aba=aba)
 
-    # ── 2. DADOS (saldo) ──────────────────────────────
+    # ── 2. DADOS — desconta peso do saldo do pedido ───
     cliente = pagador
     try:
         peso_num = float(peso.replace(",", "."))
     except Exception:
         peso_num = 0
 
-    if peso_num > 0:
-        gravar_carregamento_dados(
-            conta, destino, cliente, pedido, produto,
-            data, placa, peso, frete_emp, status
+    if peso_num > 0 and pedido:
+        return _descontar_saldo_pedido(
+            service, pedido, cliente, peso_num,
+            destino  = destino,
+            produto  = produto,
+            data     = data,
+            placa    = placa,
+            frete    = frete_emp,
+            status   = status,
         )
+    return False  # peso zero ou sem pedido — saldo não descontado
 
 
-def _get_base_sheet_id(service):
+def _descontar_saldo_pedido(service, pedido, cliente, peso_num,
+                             destino="", produto="", data="", placa="",
+                             frete="", status=""):
+    """
+    Insere uma linha de carregamento na planilha DADOS vinculada ao pedido.
+    O saldo_restante é calculado dinamicamente por carregar_blocos_dados
+    como: saldo_total - soma(pesos dos carregamentos do pedido).
+    Só grava se o pedido já estiver cadastrado na planilha de saldo.
+    Retorna True se gravou, False se pedido não encontrado.
+    """
+    sheet = service.spreadsheets()
+
+    # Busca o registro-mestre do pedido para obter destino/cliente/produto/saldo_total
+    resp = sheet.values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'!A:E",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+
+    valores      = resp.get("values", [])
+    dados_mestre = None
+    pedido_upper = str(pedido).strip().upper()
+    cliente_upper = str(cliente).strip().upper()
+    produto_upper = str(produto).strip().upper()
+
+    def _normalizar(s):
+        """Remove espaços duplos, strip e upper."""
+        import re
+        return re.sub(r"\s+", " ", str(s).strip().upper())
+
+    def _palavras_em_comum(a, b):
+        """Verifica se as palavras principais de 'a' existem em 'b' ou vice-versa."""
+        palavras_a = set(_normalizar(a).split())
+        palavras_b = set(_normalizar(b).split())
+        # Remove palavras muito curtas (artigos, preposições)
+        palavras_a = {p for p in palavras_a if len(p) > 2}
+        palavras_b = {p for p in palavras_b if len(p) > 2}
+        if not palavras_a or not palavras_b:
+            return True  # sem palavras suficientes, não bloqueia
+        # Considera match se pelo menos 60% das palavras da menor string estiver na outra
+        menor = palavras_a if len(palavras_a) <= len(palavras_b) else palavras_b
+        maior = palavras_b if len(palavras_a) <= len(palavras_b) else palavras_a
+        matches = sum(1 for p in menor if p in maior)
+        return matches / len(menor) >= 0.6
+
+    for linha in valores[1:]:
+        if len(linha) < 4:
+            continue
+
+        ped_plan  = _normalizar(linha[2])
+        cli_plan  = _normalizar(linha[1]) if len(linha) > 1 else ""
+        prod_plan = _normalizar(linha[3]) if len(linha) > 3 else ""
+
+        # 1. Pedido deve ser idêntico
+        if ped_plan != pedido_upper:
+            continue
+
+        # 2. Produto deve ter palavras em comum
+        if produto_upper and prod_plan and not _palavras_em_comum(produto_upper, prod_plan):
+            continue
+
+        # 3. Cliente deve ter palavras em comum
+        if cliente_upper and cli_plan and not _palavras_em_comum(cliente_upper, cli_plan):
+            continue
+
+        # Pega saldo_total — ignora linhas com saldo vazio mas continua procurando
+        saldo_total = 0
+        if len(linha) > 4 and str(linha[4]).strip():
+            try:
+                saldo_total = float(str(linha[4]).replace(",", "."))
+            except Exception:
+                saldo_total = 0
+
+        dados_mestre = (
+            str(linha[0]).strip() if linha[0] else destino,
+            str(linha[1]).strip() if len(linha) > 1 else cliente,
+            str(linha[2]).strip(),
+            str(linha[3]).strip() if len(linha) > 3 else produto,
+            saldo_total,
+        )
+        break
+
+    if dados_mestre is None:
+        return False
+
+    dest_final, cli_final, ped_final, prod_final, saldo_total = dados_mestre
+
+    # Insere linha de carregamento
+    sheet_id = _get_dados_sheet_id(service)
+    ultima   = _ultima_linha_dados(service)
+
+    valores_novo = [
+        dest_final,
+        cli_final,
+        ped_final,
+        prod_final,
+        saldo_total,           # repete o saldo_total (referência)
+        data,                  # DATA do carregamento
+        "",                    # NOTA (em branco — não temos aqui)
+        placa,                 # PLACA
+        str(peso_num),         # PESO carregado
+        frete,                 # FRETE
+        status or "CARREGADO", # STATUS
+    ]
+    _inserir_linha_dados(service, sheet_id, ultima, valores_novo)
+    return True
+
+
+def _get_base_sheet_id(service, aba=None):
+    aba_usar = aba or BASE_ABA
     meta = service.spreadsheets().get(spreadsheetId=BASE_ID).execute()
     for s in meta["sheets"]:
-        if s["properties"]["title"] == BASE_ABA:
+        if s["properties"]["title"] == aba_usar:
             return s["properties"]["sheetId"]
-    raise Exception(f"Aba '{BASE_ABA}' não encontrada.")
+    raise Exception(f"Aba '{aba_usar}' não encontrada na planilha BASE.")
 
 
-def _ultima_linha_base(service):
+def _ultima_linha_base(service, aba=None):
+    aba_usar = aba or BASE_ABA
     resp = service.spreadsheets().values().get(
         spreadsheetId=BASE_ID,
-        range=f"'{BASE_ABA}'!A:A",
+        range=f"'{aba_usar}'!A:A",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
     return len(resp.get("values", []))
 
 
-def _inserir_linha_base(service, sheet_id, linha_idx, valores):
+def _inserir_linha_base(service, sheet_id, linha_idx, valores, aba=None):
+    aba_usar = aba or BASE_ABA
     service.spreadsheets().batchUpdate(
         spreadsheetId=BASE_ID,
         body={"requests": [{
@@ -609,7 +856,7 @@ def _inserir_linha_base(service, sheet_id, linha_idx, valores):
     ).execute()
 
     col_fim = _col_letra(len(valores))
-    rng = f"'{BASE_ABA}'!A{linha_idx + 1}:{col_fim}{linha_idx + 1}"
+    rng = f"'{aba_usar}'!A{linha_idx + 1}:{col_fim}{linha_idx + 1}"
     service.spreadsheets().values().update(
         spreadsheetId=BASE_ID,
         range=rng,

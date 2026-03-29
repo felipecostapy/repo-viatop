@@ -302,6 +302,25 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
 
     app = None
     wb = None
+    xl_fallback = None  # instância win32com do fallback
+    pdf_path = caminho.replace(".xlsx", ".pdf")
+
+    def _fechar_tudo():
+        """Garante fechamento de todas as instâncias Excel abertas."""
+        nonlocal wb, app, xl_fallback
+        for obj, metodo in [(wb, "close"), (app, "quit")]:
+            if obj is not None:
+                try:
+                    getattr(obj, metodo)()
+                except Exception:
+                    pass
+        wb = app = None
+        if xl_fallback is not None:
+            try:
+                xl_fallback.Quit()
+            except Exception:
+                pass
+            xl_fallback = None
 
     try:
         app = xw.App(visible=False)
@@ -343,34 +362,33 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         wb.save()
         app.api.CalculateFull()
 
-        pdf_path = caminho.replace(".xlsx", ".pdf")
-
+        # Tentativa 1: exportar via xlwings
         try:
             wb.api.ExportAsFixedFormat(0, pdf_path)
         except Exception:
             pass
 
+        # Tentativa 2: fallback via win32com se PDF não gerado
         if not os.path.exists(pdf_path) or os.path.getsize(pdf_path) == 0:
+            # Fecha xlwings antes de abrir nova instância
             try:
-                wb.close()
-                wb = None
-                app.quit()
-                app = None
+                wb.close(); wb = None
+                app.quit();  app = None
+            except Exception:
+                pass
+            time.sleep(1)
 
-                time.sleep(2)
-
+            try:
                 import win32com.client as _win32
-                xl = _win32.Dispatch("Excel.Application")
-                xl.Visible = False
-                xl.DisplayAlerts = False
-                xl.ScreenUpdating = False
-                wb2 = xl.Workbooks.Open(os.path.abspath(caminho))
+                xl_fallback = _win32.Dispatch("Excel.Application")
+                xl_fallback.Visible = False
+                xl_fallback.DisplayAlerts = False
+                xl_fallback.ScreenUpdating = False
+                wb2 = xl_fallback.Workbooks.Open(os.path.abspath(caminho))
                 try:
                     wb2.ExportAsFixedFormat(0, os.path.abspath(pdf_path))
                 finally:
                     wb2.Close(False)
-                    xl.Quit()
-
             except Exception as e_fallback:
                 raise Exception(
                     f"Não foi possível gerar o PDF.\n"
@@ -387,30 +405,9 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
                 f"no Windows (Configurações > Impressoras e Scanners)."
             )
 
-        if wb:
-            try:
-                wb.close()
-                wb = None
-            except Exception:
-                pass
-        if app:
-            try:
-                app.quit()
-                app = None
-            except Exception:
-                pass
-
     finally:
-        try:
-            if wb:
-                wb.close()
-        except:
-            pass
-        try:
-            if app:
-                app.quit()
-        except:
-            pass
+        _fechar_tudo()
+
 
     if enviar_email:
         if not conta_gmail:

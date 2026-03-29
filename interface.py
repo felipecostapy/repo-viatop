@@ -164,6 +164,7 @@ def salvar_historico(dados, caminho_arquivo):
         "arquivo":   caminho_arquivo,
     }
     historico.insert(0, registro)
+    historico = historico[:200]  # mantém no máximo 200 registros
     path.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
 
 def carregar_historico():
@@ -174,6 +175,32 @@ def carregar_historico():
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return []
+
+USUARIOS = {
+    "FELIPE":   "Felipe Costa",
+    "MARCOS":   "Marcos Silva",
+    "ANA":      "Ana Souza",
+    "RAFAEL":   "Rafael Lima",
+}
+
+def _usuarios_path():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent / "usuarios.json"
+    return Path(__file__).parent / "usuarios.json"
+
+def carregar_usuarios():
+    """Carrega usuários do arquivo JSON. Se não existir, usa o dicionário padrão."""
+    path = _usuarios_path()
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    # Cria o arquivo com os usuários padrão na primeira execução
+    path.write_text(json.dumps(USUARIOS, ensure_ascii=False, indent=2), encoding="utf-8")
+    return dict(USUARIOS)
+
+
 
 
 class HistoricoWidget(QWidget):
@@ -420,42 +447,71 @@ class PlanilhaWidget(QWidget):
         if conta == "(nenhuma conta)":
             return
 
+        saldo_restante = bloco.get("saldo_restante", 0)
+        total_carregado = bloco.get("total_carregado", 0)
+
         dlg = QDialog(self)
         dlg.setWindowTitle("Ajustar Saldo")
-        dlg.setFixedSize(360, 240)
+        dlg.setFixedSize(380, 310)
         dlg.setStyleSheet(DIALOG_SS)
 
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(12)
+        lay.setSpacing(10)
 
-        info = QLabel(f"{bloco['cliente']} — Pedido {bloco['pedido']}\nSaldo atual: {bloco['saldo_total']:.0f} t")
-        info.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 600; background: transparent;")
-        lay.addWidget(info)
+        # ── Info do pedido ──
+        titulo = QLabel(f"{bloco['cliente']}")
+        titulo.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700; background: transparent;")
+        subtitulo = QLabel(f"Pedido {bloco['pedido']}  ·  {bloco['produto']}")
+        subtitulo.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        lay.addWidget(titulo)
+        lay.addWidget(subtitulo)
 
-        tipo_lay = QHBoxLayout()
-        rb_add = QRadioButton("Adicionar")
-        rb_sub = QRadioButton("Diminuir")
-        rb_add.setChecked(True)
-        for rb in [rb_add, rb_sub]:
-            rb.setFont(QFont("Arial", 11))
-            rb.setStyleSheet("""
-                QRadioButton { color: #e6edf3; background: transparent; spacing: 8px; }
-                QRadioButton::indicator { width: 16px; height: 16px; border-radius: 8px; border: 2px solid #30363d; background: #161b22; }
-                QRadioButton::indicator:checked { border-color: #238636; background: #238636; }
-                QRadioButton::indicator:hover { border-color: #58a6ff; }
-            """)
-        tipo_lay.addWidget(rb_add)
-        tipo_lay.addWidget(rb_sub)
-        lay.addLayout(tipo_lay)
+        # ── Card com saldos atuais ──
+        card = QFrame()
+        card.setStyleSheet(f"QFrame {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 8px; }}")
+        card_lay = QHBoxLayout(card)
+        card_lay.setContentsMargins(16, 10, 16, 10)
+        card_lay.setSpacing(24)
+        for label, valor, cor in [
+            ("JÁ CARREGADO",  f"{total_carregado:.0f} t",  MUTED),
+            ("SALDO RESTANTE", f"{saldo_restante:.0f} t",  ACCENT if saldo_restante > 0 else DANGER),
+        ]:
+            col = QVBoxLayout()
+            l = QLabel(label)
+            l.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; background: transparent;")
+            v = QLabel(valor)
+            v.setStyleSheet(f"color: {cor}; font-size: 16px; font-weight: 700; background: transparent;")
+            col.addWidget(l)
+            col.addWidget(v)
+            card_lay.addLayout(col)
+        card_lay.addStretch()
+        lay.addWidget(card)
 
-        lbl_v = QLabel("Quantidade (t):")
-        lbl_v.setStyleSheet(f"color: {MUTED}; font-size: 10px; font-weight: 700; background: transparent;")
+        # ── Input do novo saldo restante ──
+        lbl_v = QLabel("NOVO SALDO RESTANTE (t):")
+        lbl_v.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; background: transparent;")
         inp_v = QLineEdit()
-        inp_v.setPlaceholderText("Ex: 100")
-        inp_v.setMinimumHeight(34)
+        inp_v.setPlaceholderText(f"Ex: {saldo_restante:.0f}")
+        inp_v.setMinimumHeight(36)
         lay.addWidget(lbl_v)
         lay.addWidget(inp_v)
+
+        lbl_aviso = QLabel("")
+        lbl_aviso.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        lay.addWidget(lbl_aviso)
+
+        def _preview(texto):
+            try:
+                novo = float(texto.replace(",", "."))
+                lbl_aviso.setText(
+                    f"saldo_total será gravado como {novo + total_carregado:.0f} t  "
+                    f"({novo:.0f} restante + {total_carregado:.0f} já carregado)"
+                )
+            except Exception:
+                lbl_aviso.setText("")
+
+        inp_v.textChanged.connect(_preview)
 
         btns = QHBoxLayout()
         bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
@@ -465,21 +521,22 @@ class PlanilhaWidget(QWidget):
 
         def confirmar():
             try:
-                qtd = float(inp_v.text().replace(",", "."))
+                novo_restante = float(inp_v.text().replace(",", "."))
             except Exception:
                 QMessageBox.warning(dlg, "Atenção", "Informe um valor numérico.")
                 return
-
-            novo_saldo = bloco["saldo_total"] + qtd if rb_add.isChecked() else bloco["saldo_total"] - qtd
-            if novo_saldo < 0:
-                QMessageBox.warning(dlg, "Atenção", f"Saldo resultante seria negativo: {novo_saldo:.0f} t")
+            if novo_restante < 0:
+                QMessageBox.warning(dlg, "Atenção", "Saldo restante não pode ser negativo.")
                 return
-
             try:
                 from planilha import atualizar_saldo_dados
-                atualizar_saldo_dados(conta, bloco["cliente"], bloco["pedido"], bloco["produto"], novo_saldo)
+                saldo_total_gravado, carregado = atualizar_saldo_dados(
+                    conta, bloco["cliente"], bloco["pedido"], bloco["produto"], novo_restante
+                )
                 dlg.accept()
-                self._lbl_status.setText(f"Saldo atualizado para {novo_saldo:.0f} t")
+                self._lbl_status.setText(
+                    f"Saldo de {bloco['pedido']} atualizado — restante: {novo_restante:.0f} t"
+                )
                 self._carregar()
             except Exception as e:
                 QMessageBox.critical(dlg, "Erro", str(e))
@@ -836,22 +893,50 @@ class BaseWidget(QWidget):
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(12)
 
+        COMBO_SS = f"""
+            QComboBox {{
+                background: {SURFACE}; border: 1px solid {BORDER2};
+                border-radius: 6px; padding: 6px 10px; color: {TEXT}; font-size: 12px;
+            }}
+            QComboBox::drop-down {{ border: none; width: 18px; }}
+            QComboBox::down-arrow {{
+                border-left: 4px solid transparent;
+                border-right: 4px solid transparent;
+                border-top: 5px solid {MUTED};
+                width: 0; height: 0; margin-right: 5px;
+            }}
+        """
+
         topo = QHBoxLayout()
         titulo = QLabel("CONTROLE DE ORDENS")
         titulo.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px; background: transparent;")
 
         self._combo_conta = QComboBox()
-        self._combo_conta.setFixedWidth(220)
-        self._combo_conta.setStyleSheet(f"""
-            QComboBox {{
-                background: {SURFACE}; border: 1px solid {BORDER2};
-                border-radius: 6px; padding: 6px 10px; color: {TEXT}; font-size: 12px;
+        self._combo_conta.setFixedWidth(210)
+        self._combo_conta.setStyleSheet(COMBO_SS)
+
+        # Select de mês/aba
+        self._combo_mes = QComboBox()
+        self._combo_mes.setFixedWidth(150)
+        self._combo_mes.setStyleSheet(COMBO_SS)
+        self._combo_mes.setPlaceholderText("Mês...")
+        self._combo_mes.setToolTip("Selecione o mês para visualizar")
+
+        btn_abas = QPushButton("↺")
+        btn_abas.setFixedSize(32, 32)
+        btn_abas.setToolTip("Atualizar lista de meses")
+        btn_abas.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: 1px solid {BORDER2};
+                border-radius: 6px; color: {MUTED}; font-size: 14px;
             }}
+            QPushButton:hover {{ border-color: {ACCENT}; color: {ACCENT}; }}
         """)
+        btn_abas.clicked.connect(self._atualizar_abas)
 
         self._inp_busca = QLineEdit()
         self._inp_busca.setPlaceholderText("Buscar por pagador, pedido, produto...")
-        self._inp_busca.setFixedWidth(260)
+        self._inp_busca.setFixedWidth(240)
         self._inp_busca.setStyleSheet(f"""
             QLineEdit {{
                 background: {SURFACE}; border: 1px solid {BORDER2};
@@ -874,6 +959,8 @@ class BaseWidget(QWidget):
         topo.addWidget(titulo)
         topo.addStretch()
         topo.addWidget(self._inp_busca)
+        topo.addWidget(self._combo_mes)
+        topo.addWidget(btn_abas)
         topo.addWidget(self._combo_conta)
         topo.addWidget(btn_carregar)
         root.addLayout(topo)
@@ -941,6 +1028,7 @@ class BaseWidget(QWidget):
         self._todos_dados = []
         self._linhas_editando = {}
         self._row_to_linha_planilha = {}
+        self._aba_selecionada = None
         self._tabela.itemClicked.connect(self._on_item_click)
         self._atualizar_contas()
 
@@ -949,20 +1037,46 @@ class BaseWidget(QWidget):
         contas = _listar_contas_gmail()
         self._combo_conta.addItems(contas if contas else ["(nenhuma conta)"])
 
+    def _atualizar_abas(self):
+        conta = self._combo_conta.currentText()
+        if conta == "(nenhuma conta)":
+            return
+        try:
+            from planilha import listar_abas_base, _aba_mais_recente
+            abas = listar_abas_base(conta)
+            self._combo_mes.clear()
+            self._combo_mes.addItems(abas)
+            # Seleciona a aba mais recente por padrão
+            mais_recente = _aba_mais_recente(abas)
+            idx = self._combo_mes.findText(mais_recente)
+            if idx >= 0:
+                self._combo_mes.setCurrentIndex(idx)
+            self._aba_selecionada = self._combo_mes.currentText()
+            self._lbl_status.setText(f"{len(abas)} aba(s) encontrada(s) — selecionado: {self._aba_selecionada}")
+        except Exception as e:
+            self._lbl_status.setText(f"Erro ao listar abas: {e}")
+
     def _carregar(self):
         conta = self._combo_conta.currentText()
         if conta == "(nenhuma conta)":
             self._lbl_status.setText("Configure uma conta Gmail primeiro.")
             return
 
-        self._lbl_status.setText("Carregando...")
+        # Usa aba do combo; se não carregou ainda, lista primeiro
+        aba = self._combo_mes.currentText().strip()
+        if not aba:
+            self._atualizar_abas()
+            aba = self._combo_mes.currentText().strip()
+
+        self._aba_selecionada = aba
+        self._lbl_status.setText(f"Carregando {aba}...")
         QApplication.processEvents()
 
         try:
-            dados = carregar_base(conta)
+            dados = carregar_base(conta, aba=aba)
             self._todos_dados = dados
             self._renderizar(dados)
-            self._lbl_status.setText(f"{len(dados)} ordem(ns) encontrada(s)")
+            self._lbl_status.setText(f"{len(dados)} ordem(ns) em '{aba}'")
         except Exception as e:
             self._lbl_status.setText(f"Erro: {e}")
 
@@ -1104,7 +1218,6 @@ class BaseWidget(QWidget):
 
     def _salvar_edicao(self, row, dados_orig):
         conta = self._combo_conta.currentText()
-        novos = []
         novos_visiveis = []
         for c in range(8):
             w = self._tabela.cellWidget(row, c)
@@ -1112,15 +1225,44 @@ class BaseWidget(QWidget):
         combo = self._tabela.cellWidget(row, 8)
         novos_visiveis.append(combo.currentText() if isinstance(combo, QComboBox) else "")
 
+        # Mapeamento: índice visível → índice real na planilha
+        # visível: [0=DATA, 1=FILIAL, 2=PAGADOR, 3=MOTORISTA, 4=PLACA,
+        #           5=DESTINO, 6=UF, 7=PESO, 8=STATUS]
+        # planilha: [0=DATA,1=FILIAL,2=PAGADOR,3=AGENCIA,4=MOTORISTA,
+        #            5=PLACA,6=FABRICA,7=DESTINO,8=UF,9=PESO,
+        #            10=FRETE/E,11=FRETE/M,12=ROTA,13=AGENCIAMENTO,
+        #            14=STATUS,15=PEDIDO,16=PRODUTO]
+        VISIVEL_PARA_PLANILHA = {0: 0, 1: 1, 2: 2, 3: 4, 4: 5,
+                                  5: 7, 6: 8, 7: 9, 8: 14}
+
         try:
-            from planilha import atualizar_status_base
+            from planilha import atualizar_linha_base, carregar_base_com_linhas
             num_linha = self._row_to_linha_planilha.get(row) or self._encontrar_linha_base(dados_orig, conta)
-            if num_linha:
-                # Só atualiza STATUS (coluna 14 da planilha, índice 8 dos visíveis)
-                atualizar_status_base(conta, num_linha, novos_visiveis[8])
-            else:
+            if not num_linha:
                 QMessageBox.warning(self, "Aviso", "Linha não encontrada na planilha.")
                 return
+
+            # Lê a linha atual completa da planilha para não perder colunas não visíveis
+            linhas = carregar_base_com_linhas(conta, aba=self._aba_selecionada)
+            linha_atual = None
+            for n, l in linhas:
+                if n == num_linha:
+                    linha_atual = list(l)
+                    break
+
+            if linha_atual is None:
+                QMessageBox.warning(self, "Aviso", "Linha não encontrada na planilha.")
+                return
+
+            # Garante tamanho mínimo de 17 colunas
+            while len(linha_atual) < 17:
+                linha_atual.append("")
+
+            # Aplica apenas as colunas editadas
+            for idx_visivel, idx_planilha in VISIVEL_PARA_PLANILHA.items():
+                linha_atual[idx_planilha] = novos_visiveis[idx_visivel]
+
+            atualizar_linha_base(conta, num_linha, linha_atual, aba=self._aba_selecionada)
 
             STATUS_OPTS_COR = {
                 "CARREGADO": "#1a3a1a", "NÃO CARREGADO": "#3a1a1a",
@@ -1159,7 +1301,7 @@ class BaseWidget(QWidget):
             from planilha import deletar_linha_base
             num_linha = self._row_to_linha_planilha.get(row) or self._encontrar_linha_base(dados, conta)
             if num_linha:
-                deletar_linha_base(conta, num_linha)
+                deletar_linha_base(conta, num_linha, aba=self._aba_selecionada)
             self._tabela.removeRow(row)
             self._lbl_status.setText("Linha removida com sucesso.")
         except Exception as e:
@@ -1168,7 +1310,7 @@ class BaseWidget(QWidget):
     def _encontrar_linha_base(self, dados, conta):
         from planilha import carregar_base_com_linhas
         try:
-            linhas = carregar_base_com_linhas(conta)
+            linhas = carregar_base_com_linhas(conta, aba=self._aba_selecionada)
             chave = [str(dados[i]) if i < len(dados) else "" for i in range(4)]
             for num_linha, linha in linhas:
                 if [str(linha[i]) if i < len(linha) else "" for i in range(4)] == chave:
@@ -1234,23 +1376,33 @@ def parsear_mensagem_whatsapp(texto):
         resultado["UF"] = uf_campo
 
     produto = extrair("PRODUTO")
-    resultado["Produto"] = produto
 
-    # Detecta embalagem no texto do produto
+    # Detecta embalagem no texto do produto e remove do nome do produto
     embalagem = ""
     prod_upper = produto.upper()
-    if "BIG BAG" in prod_upper:
-        embalagem = "BIG BAG"
-    elif "GRANEL" in prod_upper:
-        embalagem = "GRANEL"
-    elif "PALETIZADO" in prod_upper:
-        embalagem = "PALETIZADO"
-    elif "SACO 50" in prod_upper:
-        embalagem = "SACO 50KG"
-    elif "SACO 25" in prod_upper:
-        embalagem = "SACO 25KG"
-    elif "SACO 40" in prod_upper:
-        embalagem = "SACO 40KG"
+    EMBALAGENS_MAP = [
+        ("BIG BAG",     "BIG BAG"),
+        ("GRANEL",      "GRANEL"),
+        ("PALETIZADO",  "PALETIZADO"),
+        ("SACO 50KG",   "SACO 50KG"),
+        ("SACO 50",     "SACO 50KG"),
+        ("SACO 25KG",   "SACO 25KG"),
+        ("SACO 25",     "SACO 25KG"),
+        ("SACO 40KG",   "SACO 40KG"),
+        ("SACO 40",     "SACO 40KG"),
+    ]
+    produto_limpo = produto
+    for token, emb_label in EMBALAGENS_MAP:
+        if token in prod_upper:
+            embalagem = emb_label
+            # Remove o token do nome do produto (case-insensitive) e limpa espaços/hífens sobrando
+            produto_limpo = re.sub(
+                rf"[-–\s]*{re.escape(token)}[-–\s]*",
+                " ", produto, flags=re.IGNORECASE
+            ).strip(" -–")
+            break
+
+    resultado["Produto"] = produto_limpo
     if embalagem:
         resultado["Embalagem"] = embalagem
 
@@ -1370,6 +1522,8 @@ class UI(QWidget):
         self.empresa = None
         self.entradas = {}
         self._pedido_linhas = []
+        self.usuario_logado  = ""
+        self.assinatura_usuario = ""
 
         self.setWindowTitle("Sistema de Ordens")
         self._setup_icon()
@@ -1381,6 +1535,9 @@ class UI(QWidget):
         self.showMaximized()
         self.escolher_empresa()
         self.setar_data_hoje()
+        # Restaura assinatura do usuário logado após limpar campos
+        if self.assinatura_usuario and "Assinatura" in self.entradas:
+            self.entradas["Assinatura"].setText(self.assinatura_usuario)
 
     def _setup_icon(self):
         base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
@@ -1718,6 +1875,7 @@ class UI(QWidget):
 
         self._carga_container = QWidget()
         self._carga_container.setStyleSheet("background: transparent;")
+        self._carga_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._carga_vbox = QVBoxLayout(self._carga_container)
         self._carga_vbox.setSpacing(6)
         self._carga_vbox.setContentsMargins(0, 0, 0, 0)
@@ -1845,16 +2003,14 @@ class UI(QWidget):
 
         EMBALAGENS = ["BIG BAG", "SACO 50KG", "SACO 25KG", "SACO 40KG", "GRANEL", "PALETIZADO"]
 
-        row_w = QWidget()
-        row_w.setStyleSheet("background: transparent;")
-        row_w.setFixedHeight(32)
-        outer = QVBoxLayout(row_w)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        # QStackedWidget: página 0 = botão, página 1 = inputs
+        stack = QStackedWidget()
+        stack.setFixedHeight(36)
+        stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        # ── Botão inativo ──
+        # ── Página 0: Botão inativo ──
         btn_ativar = QPushButton(f"＋  Pedido {idx + 1}")
-        btn_ativar.setFixedHeight(30)
+        btn_ativar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         btn_ativar.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
@@ -1866,11 +2022,12 @@ class UI(QWidget):
             }}
             QPushButton:hover {{ border-color: {ACCENT}; color: {ACCENT}; }}
         """)
-        outer.addWidget(btn_ativar)
+        stack.addWidget(btn_ativar)  # índice 0
 
-        # ── Inputs ativos ──
+        # ── Página 1: Inputs ──
         inp_w = QWidget()
         inp_w.setStyleSheet("background: transparent;")
+        inp_w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         inp_lay = QHBoxLayout(inp_w)
         inp_lay.setContentsMargins(0, 0, 0, 0)
         inp_lay.setSpacing(4)
@@ -1886,11 +2043,11 @@ class UI(QWidget):
                 comp = QCompleter(EMBALAGENS)
                 comp.setCaseSensitivity(Qt.CaseInsensitive)
                 inp.setCompleter(comp)
-                inp.setFixedHeight(30)
+                inp.setFixedHeight(32)
                 inp.setStyleSheet("QComboBox { padding: 2px 6px; font-size: 12px; }")
             else:
                 inp = QLineEdit()
-                inp.setFixedHeight(30)
+                inp.setFixedHeight(32)
                 inp.setStyleSheet("QLineEdit { padding: 2px 6px; font-size: 12px; }")
                 inp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
@@ -1900,7 +2057,7 @@ class UI(QWidget):
             self.entradas[nome] = inp
 
         btn_del = QPushButton("×")
-        btn_del.setFixedSize(24, 30)
+        btn_del.setFixedSize(24, 32)
         btn_del.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: 1px solid #30363d;
@@ -1910,25 +2067,30 @@ class UI(QWidget):
             QPushButton:hover {{ background: #da363320; border-color: #da3633; color: #f85149; }}
         """)
         inp_lay.addWidget(btn_del)
-        outer.addWidget(inp_w)
+        stack.addWidget(inp_w)  # índice 1
 
-        # Conecta botões
-        btn_ativar.clicked.connect(lambda _, b=btn_ativar, iw=inp_w: (b.hide(), iw.show()))
-        btn_del.clicked.connect(lambda _, b=btn_ativar, iw=inp_w, ln=linha: (
-            [inp.clear() if isinstance(inp, QLineEdit) else inp.setCurrentIndex(-1) for inp in ln.values()],
-            iw.hide(), b.show()
-        ))
+        # Captura referências finais para os closures (linha já completa aqui)
+        linha_ref = linha
+        stack_ref = stack
+
+        # Conecta botões — usando referências explícitas para evitar bug de closure
+        btn_ativar.clicked.connect(lambda checked=False, s=stack_ref: s.setCurrentIndex(1))
+
+        def _desativar(checked=False, s=stack_ref, ln=linha_ref):
+            for widget in ln.values():
+                if isinstance(widget, QLineEdit):
+                    widget.clear()
+                elif isinstance(widget, QComboBox):
+                    widget.setCurrentIndex(-1)
+            s.setCurrentIndex(0)
+
+        btn_del.clicked.connect(_desativar)
 
         # Estado inicial
-        if ativa:
-            btn_ativar.hide()
-            inp_w.show()
-        else:
-            btn_ativar.show()
-            inp_w.hide()
+        stack.setCurrentIndex(1 if ativa else 0)
 
-        self._pedido_linhas.append((row_w, linha))
-        self._carga_vbox.addWidget(row_w)
+        self._pedido_linhas.append((stack, linha))
+        self._carga_vbox.addWidget(stack)
 
     def _desativar_linha_pedido(self, row_w, row_stack, linha):
         for inp in linha.values():
@@ -1966,22 +2128,66 @@ class UI(QWidget):
         self.entradas["Data Apresentação"].setDate(QDate.currentDate())
 
     def escolher_empresa(self):
+        usuarios = carregar_usuarios()
+        is_primeiro_login = not self.usuario_logado
+
         dlg = QDialog(self)
         dlg.setWindowTitle("Sistema de Ordens")
-        dlg.setFixedSize(340, 230)
+        dlg.setFixedSize(360, is_primeiro_login and 360 or 240)
         dlg.setStyleSheet(DIALOG_SS)
+        dlg.setWindowFlag(Qt.WindowCloseButtonHint, is_primeiro_login is False)
 
         lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(24, 24, 24, 24)
+        lay.setContentsMargins(28, 24, 28, 24)
         lay.setSpacing(10)
 
-        t1 = QLabel("SELECIONE A EMPRESA")
-        t1.setAlignment(Qt.AlignCenter)
-        t1.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px;")
+        # ── Título ──
+        titulo = QLabel("SISTEMA DE ORDENS")
+        titulo.setAlignment(Qt.AlignCenter)
+        titulo.setStyleSheet(f"color: {TEXT}; font-size: 15px; font-weight: 700; letter-spacing: 1.5px; background: transparent;")
+        lay.addWidget(titulo)
 
-        t2 = QLabel("Sistema de Ordens de Carregamento")
-        t2.setAlignment(Qt.AlignCenter)
-        t2.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
+        subtitulo = QLabel("Sistema de Ordens de Carregamento")
+        subtitulo.setAlignment(Qt.AlignCenter)
+        subtitulo.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        lay.addWidget(subtitulo)
+        lay.addSpacing(4)
+
+        # ── Seção de login (só na primeira vez) ──
+        if is_primeiro_login:
+            sep1 = QFrame(); sep1.setFrameShape(QFrame.HLine)
+            sep1.setStyleSheet(f"color: {BORDER}; background: {BORDER}; max-height: 1px;")
+            lay.addWidget(sep1)
+
+            lbl_usuario = QLabel("USUÁRIO")
+            lbl_usuario.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+            lay.addWidget(lbl_usuario)
+
+            combo_usuario = QComboBox()
+            combo_usuario.setEditable(True)
+            combo_usuario.addItems(sorted(usuarios.keys()))
+            combo_usuario.setCurrentIndex(-1)
+            combo_usuario.lineEdit().setPlaceholderText("Selecione ou digite seu nome...")
+            combo_usuario.setMinimumHeight(36)
+            comp = QCompleter(sorted(usuarios.keys()))
+            comp.setCaseSensitivity(Qt.CaseInsensitive)
+            combo_usuario.setCompleter(comp)
+            lay.addWidget(combo_usuario)
+
+            lbl_erro = QLabel("")
+            lbl_erro.setAlignment(Qt.AlignCenter)
+            lbl_erro.setStyleSheet(f"color: {DANGER}; font-size: 11px; background: transparent;")
+            lay.addWidget(lbl_erro)
+            lay.addSpacing(4)
+
+        # ── Separador empresa ──
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.HLine)
+        sep2.setStyleSheet(f"color: {BORDER}; background: {BORDER}; max-height: 1px;")
+        lay.addWidget(sep2)
+
+        lbl_emp = QLabel("EMPRESA")
+        lbl_emp.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+        lay.addWidget(lbl_emp)
 
         btn_a = QPushButton("AGROVIA")
         btn_a.setObjectName("btn_agro")
@@ -1991,27 +2197,46 @@ class UI(QWidget):
         btn_t.setObjectName("btn_top")
         btn_t.setMinimumHeight(42)
 
-        def sel(nome):
-            self.empresa = nome
-            cor = ACCENT if nome == "Agrovia" else DANGER
+        def sel(nome_empresa):
+            if is_primeiro_login:
+                login = combo_usuario.currentText().strip().upper()
+                if not login or login not in [k.upper() for k in usuarios.keys()]:
+                    lbl_erro.setText("⚠  Selecione um usuário válido.")
+                    combo_usuario.setFocus()
+                    return
+                # Encontra a chave case-insensitive
+                chave_real = next(k for k in usuarios if k.upper() == login)
+                self.usuario_logado      = chave_real
+                self.assinatura_usuario  = usuarios[chave_real]
+                # Preenche o campo assinatura
+                if "Assinatura" in self.entradas:
+                    self.entradas["Assinatura"].setText(self.assinatura_usuario)
+
+            self.empresa = nome_empresa
+            cor = ACCENT if nome_empresa == "Agrovia" else DANGER
             self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
-            self._atualizar_fundo(nome)
+            self._atualizar_fundo(nome_empresa)
             dlg.accept()
 
         btn_a.clicked.connect(lambda: sel("Agrovia"))
         btn_t.clicked.connect(lambda: sel("TopBrasil"))
 
-        lay.addWidget(t1)
-        lay.addWidget(t2)
-        lay.addSpacing(6)
         lay.addWidget(btn_a)
         lay.addWidget(btn_t)
+
+        # Se já logado, mostra quem está logado no rodapé
+        if not is_primeiro_login:
+            lbl_logado = QLabel(f"👤  {self.assinatura_usuario}")
+            lbl_logado.setAlignment(Qt.AlignCenter)
+            lbl_logado.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent; margin-top: 4px;")
+            lay.addWidget(lbl_logado)
+
         dlg.exec()
 
-    def _deletar_linha_pedido(self, row_w, linha):
-        self._pedido_linhas = [(rw, ln) for rw, ln in self._pedido_linhas if rw is not row_w]
-        self._carga_vbox.removeWidget(row_w)
-        row_w.deleteLater()
+    def _deletar_linha_pedido(self, stack, linha):
+        self._pedido_linhas = [(s, ln) for s, ln in self._pedido_linhas if s is not stack]
+        self._carga_vbox.removeWidget(stack)
+        stack.deleteLater()
         for chave in linha:
             self.entradas.pop(chave, None)
         self.btn_add_pedido.show()
@@ -2205,45 +2430,99 @@ class UI(QWidget):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Gravar na Planilha?")
-        dlg.setFixedSize(400, 300)
+        dlg.setFixedSize(420, 360)
         dlg.setStyleSheet(DIALOG_SS)
 
         lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(20, 20, 20, 20)
-        lay.setSpacing(12)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(10)
 
-        lay.addWidget(QLabel("Deseja registrar esta ordem na planilha de controle?"))
+        # ── Título ──
+        t = QLabel("REGISTRAR ORDEM NA PLANILHA")
+        t.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+        lay.addWidget(t)
 
-        STATUS_OPTS = ["DESCARGA", "CARREGADO", "MARCADO", "CHEGA", "AGUARDANDO"]
+        # ── Info do pedido ──
+        pedido  = dados.get("Pedido", "—")
+        cliente = dados.get("Cliente", "—")
+        produto = dados.get("Produto", "—")
+        peso    = dados.get("Peso", "—")
+        destino = dados.get("Destino", "—")
+
+        card = QFrame()
+        card.setStyleSheet(f"QFrame {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 8px; }}")
+        card_lay = QVBoxLayout(card)
+        card_lay.setContentsMargins(14, 10, 14, 10)
+        card_lay.setSpacing(4)
+        for label, valor in [
+            ("Cliente",  cliente),
+            ("Pedido",   pedido),
+            ("Produto",  produto),
+            ("Destino",  destino),
+            ("Peso",     f"{peso} t"),
+        ]:
+            row = QHBoxLayout()
+            lbl = QLabel(label.upper())
+            lbl.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; background: transparent; min-width: 60px;")
+            val = QLabel(str(valor))
+            val.setStyleSheet(f"color: {TEXT}; font-size: 12px; background: transparent;")
+            row.addWidget(lbl)
+            row.addWidget(val, 1)
+            card_lay.addLayout(row)
+
+        # Aviso de desconto de saldo
+        lbl_saldo = QLabel(f"⚡  {peso} t serão descontadas do saldo do pedido {pedido}")
+        lbl_saldo.setStyleSheet(f"color: #e3b341; font-size: 11px; font-weight: 600; background: transparent;")
+        lbl_saldo.setWordWrap(True)
+        card_lay.addWidget(lbl_saldo)
+        lay.addWidget(card)
+
+        # ── Status ──
         lbl_st = QLabel("STATUS:")
+        lbl_st.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; background: transparent;")
         combo_st = QComboBox()
-        combo_st.addItems(STATUS_OPTS)
-        combo_st.setStyleSheet(f"background:{SURFACE}; border:1px solid {BORDER2}; border-radius:6px; padding:6px; color:{TEXT};")
+        combo_st.addItems(["DESCARGA", "CARREGADO", "MARCADO", "CHEGA", "AGUARDANDO"])
+        combo_st.setStyleSheet(f"""
+            QComboBox {{
+                background: {SURFACE}; border: 1px solid {BORDER2};
+                border-radius: 6px; padding: 7px 10px; color: {TEXT}; font-size: 12px;
+            }}
+        """)
         lay.addWidget(lbl_st)
         lay.addWidget(combo_st)
 
-        pedido  = dados.get("Pedido", "")
-        cliente = dados.get("Cliente", "")
-        produto = dados.get("Produto", "")
-
-        info = QLabel(f"Cliente: {cliente}\nPedido: {pedido}\nProduto: {produto}")
-        info.setStyleSheet(f"color: {MUTED}; font-size: 11px;")
-        lay.addWidget(info)
+        # ── Aba de destino ──
+        aba_base = self._base_widget._aba_selecionada or ""
+        lbl_aba = QLabel(f"Gravando em:  {aba_base if aba_base else 'aba mais recente (automático)'}")
+        lbl_aba.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        lay.addWidget(lbl_aba)
 
         btns = QHBoxLayout()
         bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
-        bo = QPushButton("GRAVAR");   bo.setObjectName("btn_ok")
+        bo = QPushButton("GRAVAR E DESCONTAR SALDO"); bo.setObjectName("btn_ok")
         btns.addWidget(bc); btns.addWidget(bo)
         lay.addLayout(btns)
 
         def gravar():
             try:
-                from planilha import gravar_ordem_dupla
+                from planilha import gravar_ordem_dupla, _autenticar, _descontar_saldo_pedido
                 filial = self.empresa if self.empresa else "AGROVIA"
                 st     = combo_st.currentText().upper()
-                gravar_ordem_dupla(conta, dados, filial, st)
+                aba    = self._base_widget._aba_selecionada or None
+                gravou_saldo = gravar_ordem_dupla(conta, dados, filial, st, aba=aba)
                 dlg.accept()
-                QMessageBox.information(self, "Sucesso", "Registrado nas duas planilhas com sucesso!")
+
+                if gravou_saldo:
+                    QMessageBox.information(
+                        self, "Sucesso",
+                        f"Ordem gravada.\n{peso} t descontadas do saldo do pedido {pedido}."
+                    )
+                else:
+                    QMessageBox.warning(
+                        self, "Atenção",
+                        f"Ordem gravada na BASE.\n\nPedido {pedido} não encontrado na planilha de saldo — "
+                        f"o desconto não foi aplicado.\n\nCadastre o pedido na aba 'Controle de Pedidos' primeiro."
+                    )
             except Exception as e:
                 QMessageBox.critical(dlg, "Erro", str(e))
 
@@ -2313,6 +2592,9 @@ class UI(QWidget):
 
         for idx in range(num_pedidos):
             sufixo = f" {idx + 1}" if idx > 0 else ""
+            # Garante que a linha está visível (página 1 do stack)
+            if idx < len(self._pedido_linhas):
+                self._pedido_linhas[idx][0].setCurrentIndex(1)
             for chave in ["Pedido", "Produto", "Peso", "Embalagem"]:
                 # Embalagem detectada do produto (sem sufixo) aplica em todas as linhas
                 valor = dados.get(f"{chave}{sufixo}", "") or (dados.get("Embalagem", "") if chave == "Embalagem" else "")
@@ -2332,6 +2614,35 @@ class UI(QWidget):
             self._atualizar_fundo(emp)
 
     def nova_ordem(self):
+        # Verifica se há algum campo preenchido antes de perguntar
+        tem_dados = any(
+            (isinstance(v, QLineEdit) and v.text().strip()) or
+            (isinstance(v, QComboBox) and v.currentText().strip())
+            for v in self.entradas.values()
+        )
+
+        if tem_dados:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Nova Ordem")
+            msg.setText("Todos os campos preenchidos serão perdidos.\n\nDeseja continuar?")
+            msg.setIcon(QMessageBox.NoIcon)
+            msg.setStyleSheet(f"""
+                QMessageBox {{ background-color: {BG}; }}
+                QLabel {{ color: {TEXT}; font-size: 13px; }}
+                QPushButton {{
+                    border-radius: 6px; padding: 7px 18px;
+                    font-weight: 700; font-size: 12px; min-width: 80px;
+                }}
+            """)
+            btn_sim = msg.addButton("CONTINUAR", QMessageBox.AcceptRole)
+            btn_sim.setStyleSheet(f"background-color: {DANGER}; color: white; border: none;")
+            btn_nao = msg.addButton("CANCELAR", QMessageBox.RejectRole)
+            btn_nao.setStyleSheet(f"background-color: transparent; border: 1px solid {BORDER2}; color: {MUTED};")
+            msg.exec()
+            if msg.clickedButton() != btn_sim:
+                return
+
+        # Limpa todos os campos
         for v in self.entradas.values():
             if isinstance(v, QLineEdit):
                 v.clear()
@@ -2340,29 +2651,20 @@ class UI(QWidget):
             elif isinstance(v, QDateEdit):
                 v.setDate(QDate.currentDate())
 
-        # Reseta linhas: primeira ativa, demais volta para botão
-        for i, (row_w, linha) in enumerate(self._pedido_linhas):
-            btn = row_w.findChild(QPushButton, "")
-            btns = [c for c in row_w.findChildren(QPushButton)]
-            inps_w = [c for c in row_w.findChildren(QWidget) if c.layout() and isinstance(c.layout(), QHBoxLayout)]
-            # Limpa campos
+        # Reseta linhas: primeira ativa (página 1), demais volta para botão (página 0)
+        for i, (stack, linha) in enumerate(self._pedido_linhas):
             for inp in linha.values():
                 if isinstance(inp, QLineEdit):
                     inp.clear()
                 elif isinstance(inp, QComboBox):
                     inp.setCurrentIndex(-1)
-            # Mostra/esconde via filhos diretos do outer layout
-            outer_lay = row_w.layout()
-            if outer_lay and outer_lay.count() >= 2:
-                btn_item = outer_lay.itemAt(0).widget()
-                inp_item = outer_lay.itemAt(1).widget()
-                if i == 0:
-                    btn_item.hide(); inp_item.show()
-                else:
-                    btn_item.show(); inp_item.hide()
+            stack.setCurrentIndex(1 if i == 0 else 0)
 
         self.escolher_empresa()
         self.setar_data_hoje()
+        # Restaura assinatura do usuário logado após limpar campos
+        if self.assinatura_usuario and "Assinatura" in self.entradas:
+            self.entradas["Assinatura"].setText(self.assinatura_usuario)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
