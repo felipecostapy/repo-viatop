@@ -1,6 +1,10 @@
 import os
+import re
 import time
-import win32com.client
+import json
+import shutil
+import base64
+# win32com importado localmente em gerar_ordem para evitar falha na inicialização
 
 CREDENTIALS_FILE = "credentials.json"
 TOKENS_DIR = "gmail_tokens"
@@ -59,7 +63,6 @@ def _autenticar_gmail(conta):
 
 def _montar_mensagem_gmail(remetente, destinatario, assunto, corpo, pdf_path):
                                                              
-    import base64
     from email.mime.multipart import MIMEMultipart
     from email.mime.text import MIMEText
     from email.mime.base import MIMEBase
@@ -95,7 +98,6 @@ def adicionar_conta_gmail():
        
     from google_auth_oauthlib.flow import InstalledAppFlow
     from googleapiclient.discovery import build
-    import json
 
     SCOPES = [
         "https://www.googleapis.com/auth/gmail.send",
@@ -206,7 +208,6 @@ def _encontrar_excel():
 
 def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     import xlwings as xw
-    import shutil
 
     obrigatorios = ["Motorista", "Cavalo", "Pedido"]
 
@@ -279,8 +280,7 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
 
     cavalo_raw = dados.get("Cavalo", "SEM")
                                                                
-    import re as _re
-    cavalo_limpo = _re.sub(r"[^A-Za-z0-9]", "", cavalo_raw).upper()
+    cavalo_limpo = re.sub(r"[^A-Za-z0-9]", "", cavalo_raw).upper()
     if len(cavalo_limpo) > 3:
         cavalo_formatado = cavalo_limpo[:3] + "-" + cavalo_limpo[3:7]
     else:

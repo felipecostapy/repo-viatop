@@ -1,4 +1,3 @@
-
 import sys
 import os
 from pathlib import Path
@@ -16,7 +15,7 @@ pasta = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(_
 if (pasta / "interface.py").exists():
     sys.path.insert(0, str(pasta))
                                                                       
-    for mod in ["interface", "gerador"]:
+    for mod in ["interface", "gerador", "planilha"]:
         if mod in sys.modules:
             del sys.modules[mod]
 

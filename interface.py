@@ -1,12 +1,15 @@
 import sys
 import os
+import json
+import datetime
+import re
 from pathlib import Path
 from PySide6.QtWidgets import *
 from PySide6.QtCore import Qt, QDate, QThread, Signal, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon, QPalette
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
-from planilha import carregar_blocos, carregar_blocos_dados, gravar_carregamento, carregar_base
+from planilha import carregar_blocos_dados, gravar_carregamento, carregar_base
 
 BG       = "#0d1117"
 SURFACE  = "#161b22"
@@ -99,7 +102,6 @@ def _forcar_maiusculo(inp, texto):
         inp.blockSignals(False)
 
 def _formatar_placa(inp, texto):
-    import re
     limpo = re.sub(r"[^A-Za-z0-9]", "", texto).upper()
     formatado = limpo[:3] + "-" + limpo[3:7] if len(limpo) > 3 else limpo
     inp.blockSignals(True)
@@ -141,15 +143,12 @@ def make_card(title):
 
     return frame, content
 
-import json
-import datetime
-
 def _historico_path():
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent / "historico.json"
     return Path(__file__).parent / "historico.json"
 
-def salvar_historico(dados, caminho_arquivo):
+def salvar_historico(dados, caminho_arquivo, conta=None, usuario=None):
     path = _historico_path()
     try:
         historico = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
@@ -158,14 +157,23 @@ def salvar_historico(dados, caminho_arquivo):
 
     registro = {
         "data_hora": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+        "usuario":   usuario or "",
         "motorista": dados.get("Motorista", ""),
         "placa":     dados.get("Cavalo", ""),
         "empresa":   dados.get("empresa", ""),
         "arquivo":   caminho_arquivo,
     }
     historico.insert(0, registro)
-    historico = historico[:200]  # mantém no máximo 200 registros
+    historico = historico[:200]
     path.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Tenta gravar na planilha centralizada (não bloqueia se falhar)
+    if conta and conta != "(nenhuma conta)":
+        try:
+            from planilha import gravar_historico_planilha
+            gravar_historico_planilha(conta, registro)
+        except Exception:
+            pass
 
 def carregar_historico():
     path = _historico_path()
@@ -1187,6 +1195,9 @@ class BaseWidget(QWidget):
                     padding: 0px 2px;
                 }}
             """)
+            # Força maiúsculo ao digitar (exceto coluna de data)
+            if c != 0:
+                inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
             self._tabela.setCellWidget(row, c, inp)
 
         combo = QComboBox()
@@ -1321,7 +1332,6 @@ class BaseWidget(QWidget):
 
 
 def parsear_mensagem_whatsapp(texto):
-    import re
     resultado = {}
 
     def extrair(chave):
@@ -2128,7 +2138,17 @@ class UI(QWidget):
         self.entradas["Data Apresentação"].setDate(QDate.currentDate())
 
     def escolher_empresa(self):
-        usuarios = carregar_usuarios()
+        # Tenta buscar usuários da planilha centralizada primeiro
+        conta = self._planilha_widget._combo_conta.currentText() if hasattr(self, '_planilha_widget') else ""
+        usuarios = None
+        if conta and conta != "(nenhuma conta)":
+            try:
+                from planilha import carregar_usuarios_planilha
+                usuarios = carregar_usuarios_planilha(conta)
+            except Exception:
+                pass
+        if not usuarios:
+            usuarios = carregar_usuarios()   # fallback local
         is_primeiro_login = not self.usuario_logado
 
         dlg = QDialog(self)
@@ -2358,18 +2378,99 @@ class UI(QWidget):
         return resultado[0]
 
     def _dialog_preview_email(self, destinatario, assunto, corpo):
+        from gerador import REGRAS_EMAIL
+
+        # Monta lista plana de emails únicos a partir de REGRAS_EMAIL
+        emails_rapidos = []
+        vistos = set()
+        for valor in REGRAS_EMAIL.values():
+            for email in valor.split(";"):
+                email = email.strip()
+                if email and email not in vistos and "@" in email:
+                    emails_rapidos.append(email)
+                    vistos.add(email)
+
         dlg = QDialog(self)
         dlg.setWindowTitle("Prévia do email")
-        dlg.setMinimumWidth(520)
+        dlg.setMinimumWidth(540)
         dlg.setStyleSheet(DIALOG_SS)
 
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(20, 20, 20, 20)
         lay.setSpacing(8)
 
+        # ── Botões de email rápido ──────────────────────
+        if emails_rapidos:
+            lbl_rapido = QLabel("E-MAILS RÁPIDOS")
+            lbl_rapido.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+            lay.addWidget(lbl_rapido)
+
+            btn_wrap = QWidget()
+            btn_wrap.setStyleSheet("background: transparent;")
+            btn_flow = QHBoxLayout(btn_wrap)
+            btn_flow.setContentsMargins(0, 0, 0, 4)
+            btn_flow.setSpacing(6)
+            btn_flow.setAlignment(Qt.AlignLeft)
+
+            email_btns = {}
+
+            def _make_btn_email(email):
+                btn = QPushButton(email)
+                btn.setCheckable(True)
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: transparent;
+                        border: 1px solid {BORDER2};
+                        border-radius: 5px;
+                        color: {MUTED};
+                        font-size: 10px;
+                        padding: 4px 8px;
+                    }}
+                    QPushButton:checked {{
+                        background: {ACCENT}22;
+                        border-color: {ACCENT};
+                        color: {ACCENT};
+                        font-weight: 700;
+                    }}
+                    QPushButton:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
+                """)
+                return btn
+
+            def _atualizar_botoes():
+                atual = set(e.strip() for e in inp_d.text().split(";") if e.strip())
+                for em, b in email_btns.items():
+                    b.blockSignals(True)
+                    b.setChecked(em in atual)
+                    b.blockSignals(False)
+
+            def _toggle_email(email):
+                atual = [e.strip() for e in inp_d.text().split(";") if e.strip()]
+                if email in atual:
+                    atual.remove(email)
+                else:
+                    atual.append(email)
+                inp_d.setText(";".join(atual))
+
+            for email in emails_rapidos:
+                b = _make_btn_email(email)
+                email_btns[email] = b
+                btn_flow.addWidget(b)
+                b.clicked.connect(lambda checked, em=email: _toggle_email(em))
+
+            btn_flow.addStretch()
+            lay.addWidget(btn_wrap)
+
+        # ── Campos ──────────────────────────────────────
         lay.addWidget(QLabel("DESTINATÁRIO"))
-        inp_d = QLineEdit(destinatario); inp_d.setMinimumHeight(32)
+        inp_d = QLineEdit(destinatario)
+        inp_d.setMinimumHeight(32)
         lay.addWidget(inp_d)
+
+        # Atualiza botões ao editar o campo manualmente
+        if emails_rapidos:
+            inp_d.textChanged.connect(lambda _: _atualizar_botoes())
+            # Estado inicial dos botões
+            _atualizar_botoes()
 
         lay.addWidget(QLabel("ASSUNTO"))
         inp_a = QLineEdit(assunto); inp_a.setMinimumHeight(36)
@@ -2405,7 +2506,12 @@ class UI(QWidget):
         for b in [self.btn1, self.btn2, self.btn3]:
             b.setEnabled(True)
 
-        salvar_historico(self._thread.dados, caminho)
+        conta   = self._planilha_widget._combo_conta.currentText()
+        salvar_historico(
+            self._thread.dados, caminho,
+            conta   = conta if conta != "(nenhuma conta)" else None,
+            usuario = self.usuario_logado,
+        )
 
         msg = QMessageBox(self)
         msg.setWindowTitle("Sucesso")
@@ -2548,7 +2654,7 @@ class UI(QWidget):
 
         lay.addWidget(QLabel("Cole a mensagem do WhatsApp:"))
         caixa = QTextEdit()
-        caixa.setPlaceholderText("🗒️ TAG\nTRANSPORTADORA: TOP BRASIL\n...")
+        caixa.setPlaceholderText("🗒️ TAG\nFILIAL: TOP BRASIL\n...")
         lay.addWidget(caixa)
 
         btns = QHBoxLayout()
@@ -2563,8 +2669,68 @@ class UI(QWidget):
             texto = caixa.toPlainText().strip()
             if not texto:
                 return
-            self.nova_ordem()
-            self._preencher_campos(parsear_mensagem_whatsapp(texto))
+
+            dados = parsear_mensagem_whatsapp(texto)
+
+            # Verifica se há campos preenchidos e pede confirmação de limpeza
+            tem_dados = any(
+                (isinstance(v, QLineEdit) and v.text().strip()) or
+                (isinstance(v, QComboBox) and v.currentText().strip())
+                for v in self.entradas.values()
+            )
+            if tem_dados:
+                msg = QMessageBox(self)
+                msg.setWindowTitle("Importar WhatsApp")
+                msg.setText("Os campos atuais serão limpos.\n\nDeseja continuar?")
+                msg.setIcon(QMessageBox.NoIcon)
+                msg.setStyleSheet(f"""
+                    QMessageBox {{ background-color: {BG}; }}
+                    QLabel {{ color: {TEXT}; font-size: 13px; }}
+                    QPushButton {{
+                        border-radius: 6px; padding: 7px 18px;
+                        font-weight: 700; font-size: 12px; min-width: 80px;
+                    }}
+                """)
+                btn_sim = msg.addButton("CONTINUAR", QMessageBox.AcceptRole)
+                btn_sim.setStyleSheet(f"background-color: {DANGER}; color: white; border: none;")
+                btn_nao = msg.addButton("CANCELAR", QMessageBox.RejectRole)
+                btn_nao.setStyleSheet(f"background-color: transparent; border: 1px solid {BORDER2}; color: {MUTED};")
+                msg.exec()
+                if msg.clickedButton() != btn_sim:
+                    return
+
+            # Limpa campos sem chamar nova_ordem (que abriria diálogo de empresa)
+            for v in self.entradas.values():
+                if isinstance(v, QLineEdit):
+                    v.clear()
+                elif isinstance(v, QComboBox):
+                    v.setCurrentIndex(-1)
+                elif isinstance(v, QDateEdit):
+                    v.setDate(QDate.currentDate())
+            for i, (stack, linha) in enumerate(self._pedido_linhas):
+                for inp in linha.values():
+                    if isinstance(inp, QLineEdit):
+                        inp.clear()
+                    elif isinstance(inp, QComboBox):
+                        inp.setCurrentIndex(-1)
+                stack.setCurrentIndex(1 if i == 0 else 0)
+            self.setar_data_hoje()
+
+            # Define empresa direto pela tag — sem abrir diálogo
+            empresa = dados.get("empresa", "")
+            if empresa:
+                self.empresa = empresa
+                cor = ACCENT if empresa == "Agrovia" else DANGER
+                self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
+                self._atualizar_fundo(empresa)
+            else:
+                self.escolher_empresa()
+
+            # Restaura assinatura
+            if self.assinatura_usuario and "Assinatura" in self.entradas:
+                self.entradas["Assinatura"].setText(self.assinatura_usuario)
+
+            self._preencher_campos(dados)
             dlg.accept()
 
         bo.clicked.connect(confirmar)

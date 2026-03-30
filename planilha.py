@@ -19,6 +19,65 @@ SCOPES = [
     "openid",
 ]
 
+CONFIG_ABA = "CONFIG"   # aba da planilha BASE com usuários e config central
+
+
+def carregar_usuarios_planilha(conta):
+    """
+    Lê os usuários da aba CONFIG da planilha BASE.
+    Formato esperado na aba CONFIG:
+      Coluna A: LOGIN (ex: FELIPE)
+      Coluna B: ASSINATURA (ex: Felipe Costa)
+    Retorna dict {LOGIN: ASSINATURA}.
+    Fallback para arquivo local se aba não existir.
+    """
+    try:
+        service = _autenticar(conta)
+        resp = service.spreadsheets().values().get(
+            spreadsheetId=BASE_ID,
+            range=f"'{CONFIG_ABA}'!A:B",
+            valueRenderOption="FORMATTED_VALUE",
+        ).execute()
+        valores = resp.get("values", [])
+        usuarios = {}
+        for linha in valores:
+            if len(linha) >= 2 and str(linha[0]).strip():
+                login     = str(linha[0]).strip().upper()
+                assinatura = str(linha[1]).strip()
+                if login and assinatura:
+                    usuarios[login] = assinatura
+        return usuarios if usuarios else None
+    except Exception:
+        return None
+
+
+def gravar_historico_planilha(conta, registro):
+    """
+    Grava um registro de histórico na aba HISTORICO da planilha BASE.
+    Colunas: DATA_HORA | USUARIO | MOTORISTA | PLACA | EMPRESA | ARQUIVO
+    Usa append atômico — seguro para múltiplos usuários.
+    """
+    try:
+        service = _autenticar(conta)
+        valores = [
+            registro.get("data_hora", ""),
+            registro.get("usuario",   ""),
+            registro.get("motorista", ""),
+            registro.get("placa",     ""),
+            registro.get("empresa",   ""),
+            registro.get("arquivo",   ""),
+        ]
+        service.spreadsheets().values().append(
+            spreadsheetId=BASE_ID,
+            range="'HISTORICO'!A1",
+            valueInputOption="USER_ENTERED",
+            insertDataOption="INSERT_ROWS",
+            body={"values": [valores]},
+        ).execute()
+        return True
+    except Exception:
+        return False
+
 
 def _autenticar(conta):
     from google.oauth2.credentials import Credentials
@@ -279,47 +338,15 @@ def _col_letra(n):
 
 
 def gravar_carregamento(conta, bloco, data, placa, peso, status):
-    service     = _autenticar(conta)
-    sheet       = service.spreadsheets()
-    col         = bloco["col"]
-    linha_total = bloco["linha_total"]
-
-    if linha_total is None:
-        raise Exception("Linha de TOTAL não encontrada no bloco.")
-
-    # Converte linha (1-based) para índice (0-based) para a API
-    linha_idx = linha_total - 1
-
-    # 1. Insere uma linha vazia antes do TOTAL
-    sheet.batchUpdate(
+    """Mantido por compatibilidade — usa append atômico."""
+    service = _autenticar(conta)
+    valores = [data, "", placa, str(peso), "", status]
+    service.spreadsheets().values().append(
         spreadsheetId=SPREADSHEET_ID,
-        body={
-            "requests": [{
-                "insertDimension": {
-                    "range": {
-                        "sheetId": _get_sheet_id(service),
-                        "dimension": "ROWS",
-                        "startIndex": linha_idx,
-                        "endIndex": linha_idx + 1,
-                    },
-                    "inheritFromBefore": True,
-                }
-            }]
-        }
-    ).execute()
-
-    # 2. Escreve os dados na nova linha
-    col_ini = _col_letra(col + 1)
-    col_fim = _col_letra(col + 6)
-    rng     = f"'{ABA}'!{col_ini}{linha_total}:{col_fim}{linha_total}"
-
-    nova_linha = [[data, "", placa, str(peso), "", status]]
-
-    sheet.values().update(
-        spreadsheetId=SPREADSHEET_ID,
-        range=rng,
+        range=f"'{ABA}'!A1",
         valueInputOption="USER_ENTERED",
-        body={"values": nova_linha},
+        insertDataOption="INSERT_ROWS",
+        body={"values": [valores]},
     ).execute()
 
 
@@ -386,11 +413,12 @@ def carregar_base(conta, aba=None):
             if str(linha[0]).strip().upper() == "DATA":
                 header_found = True
             continue
-        data    = str(linha[0]).strip()
+        data    = _formatar_data(str(linha[0]).strip())
         pagador = str(linha[2]).strip()
         if not data or not pagador:
             continue
-        row = list(linha[:17]) + [i]
+        row    = list(linha[:17]) + [i]
+        row[0] = data   # substitui data já formatada
         dados.append(row)
 
     return dados
@@ -487,55 +515,33 @@ def _ultima_linha_dados(service):
 
 
 def _inserir_linha_dados(service, sheet_id, linha_idx, valores):
-    service.spreadsheets().batchUpdate(
+    """Usa values().append — atômico e seguro para múltiplos usuários simultâneos."""
+    service.spreadsheets().values().append(
         spreadsheetId=DADOS_ID,
-        body={"requests": [{
-            "insertDimension": {
-                "range": {
-                    "sheetId":    sheet_id,
-                    "dimension":  "ROWS",
-                    "startIndex": linha_idx,
-                    "endIndex":   linha_idx + 1,
-                },
-                "inheritFromBefore": True,
-            }
-        }]}
-    ).execute()
-
-    col_fim = _col_letra(len(valores))
-    rng = f"'{DADOS_ABA}'!A{linha_idx + 1}:{col_fim}{linha_idx + 1}"
-    service.spreadsheets().values().update(
-        spreadsheetId=DADOS_ID,
-        range=rng,
+        range=f"'{DADOS_ABA}'!A1",
         valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
         body={"values": [valores]},
     ).execute()
 
 
 def criar_pedido_dados(conta, destino, cliente, pedido, produto, saldo_total):
-    service  = _autenticar(conta)
-    sheet_id = _get_dados_sheet_id(service)
-    ultima   = _ultima_linha_dados(service)
-
+    service = _autenticar(conta)
     valores = [destino, cliente, pedido, produto, saldo_total,
                "", "", "", "", "", "NÃO CARREGADO"]
-    _inserir_linha_dados(service, sheet_id, ultima, valores)
+    _inserir_linha_dados(service, None, None, valores)
 
 
 def gravar_carregamento_dados(conta, destino, cliente, pedido, produto,
                                data, placa, peso, frete, status):
-    service  = _autenticar(conta)
-    sheet_id = _get_dados_sheet_id(service)
-    ultima   = _ultima_linha_dados(service)
-
+    service = _autenticar(conta)
     try:
         saldo_total = _buscar_saldo_total_dados(service, pedido)
     except Exception:
         saldo_total = ""
-
     valores = [destino, cliente, pedido, produto, saldo_total,
                data, "", placa, peso, frete, status]
-    _inserir_linha_dados(service, sheet_id, ultima, valores)
+    _inserir_linha_dados(service, None, None, valores)
 
 
 def _buscar_saldo_total_dados(service, pedido):
@@ -664,8 +670,7 @@ def gravar_ordem_dupla(conta, dados_ordem, filial, status="CONFERIDO", aba=None)
         aba  = _aba_mais_recente(abas)
 
     # ── 1. BASE (controle de ordens) ──────────────────
-    sheet_id_base = _get_base_sheet_id(service, aba=aba)
-    ultima_base   = _ultima_linha_base(service, aba=aba)
+    # append é atômico — não precisa buscar última linha
 
     data         = str(dados_ordem.get("Data Apresentação", "")).upper()
     motorista    = str(dados_ordem.get("Motorista", "")).upper()
@@ -689,7 +694,7 @@ def gravar_ordem_dupla(conta, dados_ordem, filial, status="CONFERIDO", aba=None)
         frete_emp, frete_mot, rota, agenciamento, status, pedido, produto
     ]
 
-    _inserir_linha_base(service, sheet_id_base, ultima_base, linha_fretes, aba=aba)
+    _inserir_linha_base(service, None, None, linha_fretes, aba=aba)
 
     # ── 2. DADOS — desconta peso do saldo do pedido ───
     cliente = pagador
@@ -839,27 +844,12 @@ def _ultima_linha_base(service, aba=None):
 
 
 def _inserir_linha_base(service, sheet_id, linha_idx, valores, aba=None):
+    """Usa values().append — atômico e seguro para múltiplos usuários simultâneos."""
     aba_usar = aba or BASE_ABA
-    service.spreadsheets().batchUpdate(
+    service.spreadsheets().values().append(
         spreadsheetId=BASE_ID,
-        body={"requests": [{
-            "insertDimension": {
-                "range": {
-                    "sheetId":    sheet_id,
-                    "dimension":  "ROWS",
-                    "startIndex": linha_idx,
-                    "endIndex":   linha_idx + 1,
-                },
-                "inheritFromBefore": True,
-            }
-        }]}
-    ).execute()
-
-    col_fim = _col_letra(len(valores))
-    rng = f"'{aba_usar}'!A{linha_idx + 1}:{col_fim}{linha_idx + 1}"
-    service.spreadsheets().values().update(
-        spreadsheetId=BASE_ID,
-        range=rng,
+        range=f"'{aba_usar}'!A1",
         valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
         body={"values": [valores]},
     ).execute()
