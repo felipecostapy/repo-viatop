@@ -1,16 +1,20 @@
 import os
+import re
 from pathlib import Path
 
-SPREADSHEET_ID   = "16WPNHpjECjcPN5F_PcV3jbXr0OUzkBlbMxn_1p7QXio"
-ABA              = "Página01"
+# ── Planilha 1: BASE (ordens por mês) ─────────────────────────────
+BASE_ID  = "1xab_LceMGpjIhXKDp1iUp3OUjqk1Z3SOz05vScFqTJg"
+BASE_ABA = "BASE 03/2026"   # fallback — sobrescrito dinamicamente
+
+# ── Planilha 2: DADOS (saldo, config, histórico) ───────────────────
+DADOS_ID      = "18kpcoEF6dT19s3crJ0forj9n5iAG6HGDRbChnpvUlZI"
+PEDIDOS_ABA   = "PEDIDOS"    # cadastro dos pedidos — uma linha por pedido
+DADOS_ABA     = "DADOS"      # carregamentos — uma linha por carregamento
+CONFIG_ABA    = "CONFIG"
+HISTORICO_ABA = "HISTORICO"
+
 TOKENS_DIR       = "gmail_tokens"
 CREDENTIALS_FILE = "credentials.json"
-COL_STARTS       = [0, 7, 14]
-COL_WIDTH        = 6
-
-# Nova planilha de dados (tabela plana)
-DADOS_ID  = "1Uh_CFR2C3YypSIVQhGuekRTk_Lvy7I-0G5aFzIr39As"
-DADOS_ABA = "DADOS"
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
@@ -19,7 +23,6 @@ SCOPES = [
     "openid",
 ]
 
-CONFIG_ABA = "CONFIG"   # aba da planilha BASE com usuários e config central
 
 
 def carregar_usuarios_planilha(conta):
@@ -34,7 +37,7 @@ def carregar_usuarios_planilha(conta):
     try:
         service = _autenticar(conta)
         resp = service.spreadsheets().values().get(
-            spreadsheetId=BASE_ID,
+            spreadsheetId=DADOS_ID,
             range=f"'{CONFIG_ABA}'!A:B",
             valueRenderOption="FORMATTED_VALUE",
         ).execute()
@@ -60,7 +63,7 @@ def gravar_historico_planilha(conta, registro):
     try:
         service = _autenticar(conta)
         valores = [
-            registro.get("data_hora", ""),
+            _converter_data_para_sheets(registro.get("data_hora", "")),
             registro.get("usuario",   ""),
             registro.get("motorista", ""),
             registro.get("placa",     ""),
@@ -68,8 +71,8 @@ def gravar_historico_planilha(conta, registro):
             registro.get("arquivo",   ""),
         ]
         service.spreadsheets().values().append(
-            spreadsheetId=BASE_ID,
-            range="'HISTORICO'!A1",
+            spreadsheetId=DADOS_ID,
+            range=f"'{HISTORICO_ABA}'!A1",
             valueInputOption="USER_ENTERED",
             insertDataOption="INSERT_ROWS",
             body={"values": [valores]},
@@ -99,136 +102,71 @@ def _autenticar(conta):
     return build("sheets", "v4", credentials=creds)
 
 
-def carregar_blocos(conta):
-    service = _autenticar(conta)
-    sheet   = service.spreadsheets()
-
-    resp = sheet.values().get(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"'{ABA}'",
-        valueRenderOption="UNFORMATTED_VALUE",
-    ).execute()
-
-    valores = resp.get("values", [])
-    if not valores:
-        return []
-
-    max_col    = max(len(r) for r in valores)
-    linhas     = [r + [""] * (max_col - len(r)) for r in valores]
-    num_linhas = len(linhas)
-
-    def cell(r, c):
-        if r < num_linhas and c < len(linhas[r]):
-            return str(linhas[r][c]).strip()
-        return ""
-
-    def is_cabecalho(texto):
-        return texto.count("/") >= 2
-
-    blocos = []
-
-    for col in COL_STARTS:
-        row = 0
-        while row < num_linhas:
-            cab = cell(row, col)
-            if not is_cabecalho(cab):
-                row += 1
-                continue
-
-            partes  = [p.strip() for p in cab.split("/")]
-            cliente = partes[0] if len(partes) > 0 else ""
-            cidade  = partes[1] if len(partes) > 1 else ""
-            fazenda = partes[2] if len(partes) > 2 else ""
-            fabrica = partes[3] if len(partes) > 3 else ""
-            pedido  = partes[4] if len(partes) > 4 else ""
-            produto = partes[5] if len(partes) > 5 else ""
-
-            try:
-                saldo_total = float(str(cell(row, col + 5)).replace(",", "."))
-            except Exception:
-                saldo_total = 0
-
-            row_cab = row
-            row += 2
-
-            linhas_dados = []
-            linha_total  = None
-            while row < num_linhas:
-                # TOTAL aparece na coluna C ou D do bloco (índices col+2 ou col+3)
-                c2 = cell(row, col + 2).upper()
-                c3 = cell(row, col + 3).upper()
-                if ("TOTAL" in c2 or "TOTAL" in c3):
-                    linha_total = row
-                    row += 1
-                    break
-
-                data   = cell(row, col)
-                nota   = cell(row, col + 1)
-                placa  = cell(row, col + 2)
-                peso   = cell(row, col + 3)
-                frete  = cell(row, col + 4)
-                status = cell(row, col + 5)
-
-                if any([data, nota, placa, peso, frete, status]):
-                    linhas_dados.append({
-                        "data": data, "nota": nota, "placa": placa,
-                        "peso": peso, "frete": frete, "status": status,
-                    })
-
-                row += 1
-
-            try:
-                total_carregado = sum(
-                    float(str(l["peso"]).replace(",", "."))
-                    for l in linhas_dados if l["peso"]
-                )
-                saldo_restante = saldo_total - total_carregado
-            except Exception:
-                total_carregado = 0
-                saldo_restante  = saldo_total
-
-            blocos.append({
-                "cliente":         cliente,
-                "cidade":          cidade,
-                "fazenda":         fazenda,
-                "fabrica":         fabrica,
-                "pedido":          pedido,
-                "produto":         produto,
-                "saldo_total":     saldo_total,
-                "total_carregado": total_carregado,
-                "saldo_restante":  saldo_restante,
-                "linhas":          linhas_dados,
-                "col":             col,
-                "linha_total":     linha_total,
-                "num_linhas_dados": len(linhas_dados),
-            })
-
-    return blocos
 
 
-def _formatar_data(valor):
+def _normalizar(s):
+    """Remove espaços duplos, strip e upper."""
+    return re.sub(r"\s+", " ", str(s).strip().upper())
+
+
+def _palavras_em_comum(a, b, threshold=0.6):
+    """True se >= threshold das palavras da string menor existem na maior."""
+    pa = {p for p in _normalizar(a).split() if len(p) > 2}
+    pb = {p for p in _normalizar(b).split() if len(p) > 2}
+    if not pa or not pb:
+        return True
+    menor, maior = (pa, pb) if len(pa) <= len(pb) else (pb, pa)
+    return sum(1 for p in menor if p in maior) / len(menor) >= threshold
+
+def _converter_data_para_sheets(valor):
     """
-    Normaliza datas vindas do Sheets para DD/MM ou DD/MM/AAAA.
-    Trata: '2026-03-02 00:00:00', '2026-03-02', '02/03/2026', '28/01', etc.
+    Converte data do formato brasileiro DD/MM/YYYY para ISO YYYY-MM-DD
+    que o Google Sheets interpreta corretamente independente da localização.
+    Também trata formato DD/MM (sem ano) mantendo como string.
     """
     import re
     v = str(valor).strip()
     if not v:
         return v
-
-    # Formato datetime completo: 2026-03-02 00:00:00
-    m = re.match(r"(\d{4})-(\d{2})-(\d{2})(?:\s.*)?$", v)
+    # DD/MM/YYYY → YYYY-MM-DD
+    m = re.match(r"(\d{2})/(\d{2})/(\d{4})$", v)
     if m:
-        ano, mes, dia = m.group(1), m.group(2), m.group(3)
-        return f"{dia}/{mes}/{ano}"
+        return f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+    # Já está em ISO ou outro formato — retorna como está
+    return v
 
-    # Formato ISO sem hora: 2026-03-02
-    m = re.match(r"(\d{4})-(\d{2})-(\d{2})$", v)
+
+def _formatar_data(valor):
+    """
+    Normaliza datas vindas do Sheets para DD/MM/AAAA.
+    Trata:
+      - Número serial do Excel (ex: 46111.63)  → converte via datetime
+      - '2026-03-02 00:00:00' (datetime str)   → DD/MM/AAAA
+      - '2026-03-02' (ISO)                      → DD/MM/AAAA
+      - '02/03/2026' (já formatado)             → mantém
+      - '28/01' (sem ano)                       → mantém
+    """
+    import datetime as _dt
+    v = str(valor).strip()
+    if not v:
+        return v
+
+    # Número serial do Excel (float ou int) — ex: 46111.63
+    try:
+        serial = float(v)
+        if 40000 < serial < 60000:   # intervalo razoável para datas 2009-2064
+            # Excel serial: dias desde 30/12/1899
+            data = _dt.datetime(1899, 12, 30) + _dt.timedelta(days=serial)
+            return data.strftime("%d/%m/%Y")
+    except (ValueError, TypeError):
+        pass
+
+    # Formato datetime completo: 2026-03-02 00:00:00 ou 2026/03/02 00:00:00
+    m = re.match(r"(\d{4})[-/](\d{2})[-/](\d{2})(?:[\sT].*)?$", v)
     if m:
-        ano, mes, dia = m.group(1), m.group(2), m.group(3)
-        return f"{dia}/{mes}/{ano}"
+        return f"{m.group(3)}/{m.group(2)}/{m.group(1)}"
 
-    # Já está no formato DD/MM ou DD/MM/AAAA — retorna como está
+    # Já está no formato DD/MM/AAAA ou DD/MM — retorna como está
     return v
 
 
@@ -250,41 +188,42 @@ def _formatar_nota(valor):
 
 
 def carregar_blocos_dados(conta):
+    """
+    Lê a aba PEDIDOS (cadastro) e a aba DADOS (carregamentos) separadamente
+    e combina para montar os blocos exibidos nos cards do Controle de Pedidos.
+
+    Aba PEDIDOS: DESTINO | CLIENTE | PEDIDO | PRODUTO | SALDO_TOTAL
+    Aba DADOS:   PEDIDO  | PRODUTO | CLIENTE | DATA | NOTA | PESO | FRETE | STATUS
+    """
     service = _autenticar(conta)
     sheet   = service.spreadsheets()
 
-    resp = sheet.values().get(
+    # ── 1. Lê cadastro de pedidos ────────────────────────────────
+    resp_ped = sheet.values().get(
         spreadsheetId=DADOS_ID,
-        range=f"'{DADOS_ABA}'",
+        range=f"'{PEDIDOS_ABA}'",
         valueRenderOption="FORMATTED_VALUE",
     ).execute()
-
-    valores = resp.get("values", [])
-    if not valores:
-        return []
 
     pedidos = {}
     ordem   = []
 
-    for i, linha in enumerate(valores[1:], 2):
-        while len(linha) < 11:
+    for linha in resp_ped.get("values", [])[1:]:
+        while len(linha) < 5:
             linha.append("")
-
         destino = str(linha[0]).strip()
         cliente = str(linha[1]).strip()
         pedido  = str(linha[2]).strip()
         produto = str(linha[3]).strip()
-
-        if not any([destino, cliente, pedido]):
+        if not any([cliente, pedido]):
             continue
+        try:
+            saldo_total = float(str(linha[4]).replace(",", "."))
+        except Exception:
+            saldo_total = 0
 
-        key = f"{cliente}||{pedido}||{produto}"
-
+        key = f"{_normalizar(cliente)}||{_normalizar(pedido)}||{_normalizar(produto)}"
         if key not in pedidos:
-            try:
-                saldo_total = float(str(linha[4]).replace(",", "."))
-            except Exception:
-                saldo_total = 0
             pedidos[key] = {
                 "destino":         destino,
                 "cliente":         cliente,
@@ -302,19 +241,47 @@ def carregar_blocos_dados(conta):
             }
             ordem.append(key)
 
-        data   = _formatar_data(str(linha[5]).strip())
-        nota   = _formatar_nota(str(linha[6]).strip())
-        placa  = str(linha[7]).strip()
-        peso   = str(linha[8]).strip()
-        frete  = str(linha[9]).strip()
-        status = str(linha[10]).strip()
+    # ── 2. Lê carregamentos e vincula ao pedido correto ──────────
+    resp_dados = sheet.values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'",
+        valueRenderOption="FORMATTED_VALUE",
+    ).execute()
 
-        if any([data, nota, placa, peso]):
-            pedidos[key]["linhas"].append({
+    for linha in resp_dados.get("values", [])[1:]:
+        while len(linha) < 9:
+            linha.append("")
+        # Aba DADOS: PEDIDO | PRODUTO | CLIENTE | DATA | NOTA | PESO | FRETE | STATUS
+        ped_c  = str(linha[0]).strip()
+        prod_c = str(linha[1]).strip()
+        cli_c  = str(linha[2]).strip()
+        data   = _formatar_data(str(linha[3]).strip())
+        nota   = _formatar_nota(str(linha[4]).strip())
+        placa  = str(linha[5]).strip() if len(linha) > 5 else ""
+        peso   = str(linha[6]).strip() if len(linha) > 6 else ""
+        frete  = str(linha[7]).strip() if len(linha) > 7 else ""
+        status = str(linha[8]).strip() if len(linha) > 8 else ""
+
+        if not any([ped_c, cli_c]):
+            continue
+
+        # Encontra o pedido correspondente por fuzzy match
+        chave_encontrada = None
+        for key in pedidos:
+            cli_key, ped_key, prod_key = key.split("||")
+            if (_normalizar(ped_c) == ped_key and
+                _palavras_em_comum(prod_c, prod_key) and
+                _palavras_em_comum(cli_c, cli_key)):
+                chave_encontrada = key
+                break
+
+        if chave_encontrada and any([data, nota, placa, peso]):
+            pedidos[chave_encontrada]["linhas"].append({
                 "data": data, "nota": nota, "placa": placa,
                 "peso": peso, "frete": frete, "status": status,
             })
 
+    # ── 3. Calcula saldo restante ────────────────────────────────
     for key in ordem:
         b = pedidos[key]
         try:
@@ -337,29 +304,6 @@ def _col_letra(n):
     return resultado
 
 
-def gravar_carregamento(conta, bloco, data, placa, peso, status):
-    """Mantido por compatibilidade — usa append atômico."""
-    service = _autenticar(conta)
-    valores = [data, "", placa, str(peso), "", status]
-    service.spreadsheets().values().append(
-        spreadsheetId=SPREADSHEET_ID,
-        range=f"'{ABA}'!A1",
-        valueInputOption="USER_ENTERED",
-        insertDataOption="INSERT_ROWS",
-        body={"values": [valores]},
-    ).execute()
-
-
-def _get_sheet_id(service):
-    meta = service.spreadsheets().get(spreadsheetId=SPREADSHEET_ID).execute()
-    for s in meta["sheets"]:
-        if s["properties"]["title"] == ABA:
-            return s["properties"]["sheetId"]
-    raise Exception(f"Aba '{ABA}' não encontrada.")
-
-
-BASE_ID  = "1y9blepnFkYoVrUNnUhdwxybUIlhaSw_ADaGGbT4RWPs"
-BASE_ABA = "BASE 03/2026"   # fallback — sobrescrito dinamicamente
 
 
 def listar_abas_base(conta):
@@ -368,6 +312,162 @@ def listar_abas_base(conta):
     meta    = service.spreadsheets().get(spreadsheetId=BASE_ID).execute()
     abas    = [s["properties"]["title"] for s in meta["sheets"]]
     return abas
+
+
+def migrar_base_para_dados(conta, callback_progresso=None):
+    """
+    Lê todas as abas BASE MM/AAAA da planilha BASE e migra os carregamentos
+    que possuem PEDIDO preenchido para as abas PEDIDOS e DADOS da planilha DADOS_ID.
+
+    Para cada combinação única PEDIDO+PRODUTO+CLIENTE:
+      - Cria uma linha na aba PEDIDOS com SALDO_TOTAL = 0 (ajustar manualmente depois)
+      - Grava cada carregamento na aba DADOS
+
+    Retorna dict com resumo: {pedidos_criados, carregamentos_migrados, erros}
+    """
+    service = _autenticar(conta)
+
+    # ── 1. Lista todas as abas BASE ───────────────────────────────
+    abas = listar_abas_base(conta)
+    abas_base = [a for a in abas if re.match(r"BASE\s+\d{2}/?\d{4}", a, re.IGNORECASE)]
+
+    if not abas_base:
+        raise Exception("Nenhuma aba BASE MM/AAAA encontrada na planilha.")
+
+    # ── 2. Lê carregamentos de todas as abas ──────────────────────
+    # BASE colunas: DATA(0) FILIAL(1) PAGADOR(2) AGENCIA(3) MOTORISTA(4)
+    #               PLACA(5) FABRICA(6) DESTINO(7) UF(8) PESO(9)
+    #               FRETE/E(10) FRETE/M(11) ROTA(12) AGENCIAMENTO(13)
+    #               STATUS(14) PEDIDO(15) PRODUTO(16)
+
+    todos = []  # lista de dicts com cada carregamento
+
+    for aba in abas_base:
+        if callback_progresso:
+            callback_progresso(f"Lendo {aba}...")
+        linhas = carregar_base(conta, aba=aba)
+        for row in linhas:
+            pedido  = str(row[15] or "").strip()
+            produto = str(row[16] or "").strip()
+            if not pedido:
+                continue
+            todos.append({
+                "data":    _converter_data_para_sheets(str(row[0] or "").strip()),
+                "cliente": str(row[2] or "").strip(),
+                "destino": str(row[7] or "").strip(),
+                "placa":   str(row[5] or "").strip(),
+                "pedido":  pedido,
+                "produto": produto,
+                "peso":    str(row[9] or "").strip(),
+                "frete":   str(row[10] or "").strip(),
+                "status":  str(row[14] or "").strip(),
+            })
+
+    if not todos:
+        raise Exception("Nenhum carregamento com PEDIDO preenchido encontrado na BASE.")
+
+    # ── 3. Agrupa pedidos únicos ──────────────────────────────────
+    pedidos_unicos = {}
+    ordem_pedidos  = []
+
+    for c in todos:
+        key = f"{_normalizar(c['pedido'])}||{_normalizar(c['produto'])}||{_normalizar(c['cliente'])}"
+        if key not in pedidos_unicos:
+            pedidos_unicos[key] = {
+                "destino": c["destino"],
+                "cliente": c["cliente"],
+                "pedido":  c["pedido"],
+                "produto": c["produto"],
+            }
+            ordem_pedidos.append(key)
+
+    # ── 4. Verifica quais pedidos já existem na aba PEDIDOS ───────
+    resp_exist = service.spreadsheets().values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{PEDIDOS_ABA}'!A:D",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+
+    ja_existem = set()
+    for linha in resp_exist.get("values", [])[1:]:
+        if len(linha) >= 3:
+            key = f"{_normalizar(linha[2])}||{_normalizar(linha[3] if len(linha)>3 else '')}||{_normalizar(linha[1])}"
+            ja_existem.add(key)
+
+    # ── 5. Verifica quais carregamentos já existem na aba DADOS ───
+    resp_dados = service.spreadsheets().values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'!A:F",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+
+    ja_carregados = set()
+    for linha in resp_dados.get("values", [])[1:]:
+        if len(linha) >= 6:
+            # chave: pedido+produto+cliente+data+placa
+            chave_c = f"{_normalizar(linha[0])}||{_normalizar(linha[5])}||{_normalizar(linha[4])}"
+            ja_carregados.add(chave_c)
+
+    # ── 6. Grava pedidos novos na aba PEDIDOS ─────────────────────
+    pedidos_criados = 0
+    novos_pedidos   = []
+
+    for key in ordem_pedidos:
+        if key in ja_existem:
+            continue
+        p = pedidos_unicos[key]
+        novos_pedidos.append([p["destino"], p["cliente"], p["pedido"], p["produto"], 0])
+        pedidos_criados += 1
+
+    if novos_pedidos:
+        if callback_progresso:
+            callback_progresso(f"Criando {len(novos_pedidos)} pedido(s) na aba PEDIDOS...")
+        service.spreadsheets().values().append(
+            spreadsheetId=DADOS_ID,
+            range=f"'{PEDIDOS_ABA}'!A1",
+            valueInputOption="USER_ENTERED",
+            insertDataOption="INSERT_ROWS",
+            body={"values": novos_pedidos},
+        ).execute()
+
+    # ── 7. Grava carregamentos novos na aba DADOS ─────────────────
+    carregamentos_migrados = 0
+    novos_carregamentos    = []
+
+    for c in todos:
+        chave_c = (f"{_normalizar(c['pedido'])}||"
+                   f"{_normalizar(c['produto'])}||"
+                   f"{_normalizar(c['data'])}||{_normalizar(c['placa'])}")
+        if chave_c in ja_carregados:
+            continue
+        # Aba DADOS: PEDIDO|PRODUTO|CLIENTE|DATA|NOTA|PLACA|PESO|FRETE|STATUS
+        novos_carregamentos.append([
+            c["pedido"], c["produto"], c["cliente"],
+            c["data"], "",
+            c["placa"], c["peso"], c["frete"], c["status"],
+        ])
+        carregamentos_migrados += 1
+
+    if novos_carregamentos:
+        if callback_progresso:
+            callback_progresso(f"Migrando {len(novos_carregamentos)} carregamento(s) para aba DADOS...")
+        # Envia em lotes de 500 para evitar timeout
+        lote = 500
+        for i in range(0, len(novos_carregamentos), lote):
+            service.spreadsheets().values().append(
+                spreadsheetId=DADOS_ID,
+                range=f"'{DADOS_ABA}'!A1",
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                body={"values": novos_carregamentos[i:i+lote]},
+            ).execute()
+
+    return {
+        "pedidos_criados":       pedidos_criados,
+        "carregamentos_migrados": carregamentos_migrados,
+        "total_lido":            len(todos),
+        "abas_lidas":            abas_base,
+    }
 
 
 def _aba_mais_recente(abas):
@@ -397,7 +497,7 @@ def carregar_base(conta, aba=None):
     resp = sheet.values().get(
         spreadsheetId=BASE_ID,
         range=f"'{aba_usar}'",
-        valueRenderOption="UNFORMATTED_VALUE",
+        valueRenderOption="FORMATTED_VALUE",
     ).execute()
 
     valores = resp.get("values", [])
@@ -433,7 +533,7 @@ def carregar_base_com_linhas(conta, aba=None):
     resp = sheet.values().get(
         spreadsheetId=BASE_ID,
         range=f"'{aba_usar}'",
-        valueRenderOption="UNFORMATTED_VALUE",
+        valueRenderOption="FORMATTED_VALUE",
     ).execute()
 
     valores = resp.get("values", [])
@@ -461,11 +561,94 @@ def atualizar_linha_base(conta, num_linha, novos_dados, aba=None):
     ).execute()
 
 
-def deletar_linha_base(conta, num_linha, aba=None):
+def _deletar_carregamento_dados(service, pedido, produto, cliente, data, placa):
+    """
+    Remove o carregamento correspondente da aba DADOS após deletar da BASE.
+    Identifica pelo conjunto: PEDIDO + PRODUTO + CLIENTE + DATA + PLACA.
+    Remove apenas a primeira ocorrência encontrada.
+    """
+    if not pedido and not placa:
+        return  # sem informação suficiente para identificar
+
+    resp = service.spreadsheets().values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'!A:F",
+        valueRenderOption="FORMATTED_VALUE",
+    ).execute()
+
+    valores = resp.get("values", [])
+    linha_deletar = None
+
+    ped_n   = _normalizar(pedido)
+    prod_n  = _normalizar(produto)
+    cli_n   = _normalizar(cliente)
+    data_n  = _normalizar(data)
+    placa_n = _normalizar(placa)
+
+    for i, linha in enumerate(valores[1:], 2):
+        while len(linha) < 6:
+            linha.append("")
+        # Aba DADOS: PEDIDO|PRODUTO|CLIENTE|DATA|NOTA|PLACA
+        if (_normalizar(linha[0]) == ped_n and
+            _palavras_em_comum(linha[1], prod_n) and
+            _palavras_em_comum(linha[2], cli_n) and
+            (_normalizar(linha[3]) == data_n or not data_n) and
+            (_normalizar(linha[5]) == placa_n or not placa_n)):
+            linha_deletar = i
+            break
+
+    if linha_deletar is None:
+        return  # carregamento não encontrado — não bloqueia
+
+    # Busca sheet_id da aba DADOS
+    meta     = service.spreadsheets().get(spreadsheetId=DADOS_ID).execute()
+    sheet_id = None
+    for s in meta["sheets"]:
+        if s["properties"]["title"] == DADOS_ABA:
+            sheet_id = s["properties"]["sheetId"]
+            break
+
+    if sheet_id is None:
+        return
+
+    service.spreadsheets().batchUpdate(
+        spreadsheetId=DADOS_ID,
+        body={"requests": [{
+            "deleteDimension": {
+                "range": {
+                    "sheetId":    sheet_id,
+                    "dimension":  "ROWS",
+                    "startIndex": linha_deletar - 1,
+                    "endIndex":   linha_deletar,
+                }
+            }
+        }]}
+    ).execute()
+
+
+def deletar_linha_base(conta, num_linha, aba=None, dados_linha=None):
+    """
+    Remove a linha da aba BASE e, se o carregamento existir na aba DADOS,
+    remove também de lá.
+    dados_linha: lista com os valores da linha completa da BASE (opcional).
+                 Se fornecido, usa para identificar e remover da aba DADOS.
+    """
     service  = _autenticar(conta)
     sheet    = service.spreadsheets()
     aba_usar = aba or BASE_ABA
 
+    # ── 1. Remove da aba DADOS se tiver dados suficientes ──────────
+    if dados_linha and len(dados_linha) >= 16:
+        # BASE colunas: DATA(0) FILIAL(1) PAGADOR(2) ... PLACA(5) ...
+        #               DESTINO(7) ... PEDIDO(15) PRODUTO(16)
+        pedido  = str(dados_linha[15] or "").strip() if len(dados_linha) > 15 else ""
+        produto = str(dados_linha[16] or "").strip() if len(dados_linha) > 16 else ""
+        cliente = str(dados_linha[2]  or "").strip()
+        data    = _formatar_data(str(dados_linha[0] or "").strip())
+        placa   = str(dados_linha[5]  or "").strip()
+        _deletar_carregamento_dados(service, pedido, produto, cliente, data, placa)
+
+    # ── 2. Remove da aba BASE ───────────────────────────────────────
     meta = service.spreadsheets().get(spreadsheetId=BASE_ID).execute()
     sheet_id = None
     for s in meta["sheets"]:
@@ -493,6 +676,108 @@ def deletar_linha_base(conta, num_linha, aba=None):
     ).execute()
 
 
+# ═══════════════════════════════════════════════════════════════════
+# ABA PEDIDOS — cadastro de pedidos (uma linha por pedido)
+# Colunas: DESTINO | CLIENTE | PEDIDO | PRODUTO | SALDO_TOTAL
+# ═══════════════════════════════════════════════════════════════════
+
+def criar_pedido_dados(conta, destino, cliente, pedido, produto, saldo_total):
+    """Cadastra um novo pedido na aba PEDIDOS. Uma linha por pedido."""
+    service = _autenticar(conta)
+    valores = [destino, cliente, pedido, produto, saldo_total]
+    service.spreadsheets().values().append(
+        spreadsheetId=DADOS_ID,
+        range=f"'{PEDIDOS_ABA}'!A1",
+        valueInputOption="USER_ENTERED",
+        insertDataOption="INSERT_ROWS",
+        body={"values": [valores]},
+    ).execute()
+
+
+def atualizar_saldo_dados(conta, cliente, pedido, produto, saldo_restante_desejado):
+    """
+    Atualiza o SALDO_TOTAL na aba PEDIDOS.
+    O usuário informa o saldo RESTANTE desejado.
+    O sistema soma os pesos já carregados na aba DADOS e calcula:
+        saldo_total = saldo_restante_desejado + total_já_carregado
+    """
+    service = _autenticar(conta)
+    sheet   = service.spreadsheets()
+
+    # Lê aba PEDIDOS para encontrar a linha do pedido
+    resp_ped = sheet.values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{PEDIDOS_ABA}'!A:E",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+
+    linha_pedido = None
+    for i, linha in enumerate(resp_ped.get("values", [])[1:], 2):
+        if len(linha) < 3:
+            continue
+        if (_normalizar(linha[2]) == _normalizar(pedido) and
+            _palavras_em_comum(produto, linha[3] if len(linha) > 3 else "") and
+            _palavras_em_comum(cliente, linha[1] if len(linha) > 1 else "")):
+            linha_pedido = i
+            break
+
+    if linha_pedido is None:
+        raise Exception(
+            f"Pedido {pedido} — {produto} do cliente {cliente} não encontrado na aba PEDIDOS."
+        )
+
+    # Soma pesos já carregados na aba DADOS
+    resp_dados = sheet.values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'!A:G",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+
+    total_carregado = 0.0
+    for linha in resp_dados.get("values", [])[1:]:
+        if len(linha) < 3:
+            continue
+        if (_normalizar(linha[0]) == _normalizar(pedido) and
+            _palavras_em_comum(produto, linha[1] if len(linha) > 1 else "") and
+            _palavras_em_comum(cliente, linha[2] if len(linha) > 2 else "")):
+            try:
+                total_carregado += float(str(linha[4] if len(linha) > 4 else 0).replace(",", "."))
+            except Exception:
+                pass
+
+    saldo_total_real = float(saldo_restante_desejado) + total_carregado
+
+    sheet.values().update(
+        spreadsheetId=DADOS_ID,
+        range=f"'{PEDIDOS_ABA}'!E{linha_pedido}",
+        valueInputOption="USER_ENTERED",
+        body={"values": [[saldo_total_real]]},
+    ).execute()
+
+    return saldo_total_real, total_carregado
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ABA DADOS — carregamentos (uma linha por carregamento)
+# Colunas: PEDIDO | PRODUTO | CLIENTE | DATA | NOTA | PLACA | PESO | FRETE | STATUS
+# ═══════════════════════════════════════════════════════════════════
+
+def _inserir_carregamento(service, valores):
+    """Append atômico na aba DADOS — seguro para múltiplos usuários.
+    Usa RAW para evitar que datas sejam convertidas para número serial."""
+    service.spreadsheets().values().append(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'!A1",
+        valueInputOption="RAW",
+        insertDataOption="INSERT_ROWS",
+        body={"values": [valores]},
+    ).execute()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# LEITURA — combina PEDIDOS + DADOS para montar os blocos dos cards
+# ═══════════════════════════════════════════════════════════════════
+
 def _get_dados_sheet_id(service):
     meta = service.spreadsheets().get(spreadsheetId=DADOS_ID).execute()
     for s in meta["sheets"]:
@@ -507,139 +792,7 @@ def _ultima_linha_dados(service):
         range=f"'{DADOS_ABA}'!A:A",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
-    valores = resp.get("values", [])
-    # Encontra última linha com conteúdo
-    ultima = len(valores)
-    # Retorna índice 0-based para inserir APÓS a última linha com dado
-    return ultima
-
-
-def _inserir_linha_dados(service, sheet_id, linha_idx, valores):
-    """Usa values().append — atômico e seguro para múltiplos usuários simultâneos."""
-    service.spreadsheets().values().append(
-        spreadsheetId=DADOS_ID,
-        range=f"'{DADOS_ABA}'!A1",
-        valueInputOption="USER_ENTERED",
-        insertDataOption="INSERT_ROWS",
-        body={"values": [valores]},
-    ).execute()
-
-
-def criar_pedido_dados(conta, destino, cliente, pedido, produto, saldo_total):
-    service = _autenticar(conta)
-    valores = [destino, cliente, pedido, produto, saldo_total,
-               "", "", "", "", "", "NÃO CARREGADO"]
-    _inserir_linha_dados(service, None, None, valores)
-
-
-def gravar_carregamento_dados(conta, destino, cliente, pedido, produto,
-                               data, placa, peso, frete, status):
-    service = _autenticar(conta)
-    try:
-        saldo_total = _buscar_saldo_total_dados(service, pedido)
-    except Exception:
-        saldo_total = ""
-    valores = [destino, cliente, pedido, produto, saldo_total,
-               data, "", placa, peso, frete, status]
-    _inserir_linha_dados(service, None, None, valores)
-
-
-def _buscar_saldo_total_dados(service, pedido):
-    resp = service.spreadsheets().values().get(
-        spreadsheetId=DADOS_ID,
-        range=f"'{DADOS_ABA}'!A:E",
-        valueRenderOption="UNFORMATTED_VALUE",
-    ).execute()
-    for linha in resp.get("values", [])[1:]:
-        if len(linha) > 2 and str(linha[2]).strip() == str(pedido).strip():
-            try:
-                return float(str(linha[4]).replace(",", "."))
-            except Exception:
-                return ""
-    return ""
-
-
-def atualizar_saldo_dados(conta, cliente, pedido, produto, saldo_restante_desejado):
-    """
-    Ajusta o SALDO_TOTAL de todas as linhas do pedido na planilha DADOS.
-
-    O usuário informa o SALDO RESTANTE que quer (ex: 500t).
-    O sistema soma os pesos já carregados e calcula o SALDO_TOTAL real:
-        saldo_total = saldo_restante_desejado + total_ja_carregado
-
-    Assim o cálculo saldo_total - soma(pesos) sempre bate com o valor digitado.
-    Usa fuzzy match nas palavras do cliente e produto para evitar erros de digitação.
-    """
-    import re
-
-    def _normalizar(s):
-        return re.sub(r"\s+", " ", str(s).strip().upper())
-
-    def _palavras_em_comum(a, b):
-        pa = {p for p in _normalizar(a).split() if len(p) > 2}
-        pb = {p for p in _normalizar(b).split() if len(p) > 2}
-        if not pa or not pb:
-            return True
-        menor, maior = (pa, pb) if len(pa) <= len(pb) else (pb, pa)
-        return sum(1 for p in menor if p in maior) / len(menor) >= 0.6
-
-    service = _autenticar(conta)
-    sheet   = service.spreadsheets()
-
-    # Lê colunas A:I (destino, cliente, pedido, produto, saldo_total, data, nota, placa, peso)
-    resp = sheet.values().get(
-        spreadsheetId=DADOS_ID,
-        range=f"'{DADOS_ABA}'!A:I",
-        valueRenderOption="UNFORMATTED_VALUE",
-    ).execute()
-
-    valores = resp.get("values", [])
-    linhas_atualizar   = []
-    total_ja_carregado = 0.0
-
-    for i, linha in enumerate(valores[1:], 2):
-        if len(linha) < 3:
-            continue
-
-        ped_plan  = _normalizar(linha[2])
-        cli_plan  = _normalizar(linha[1]) if len(linha) > 1 else ""
-        prod_plan = _normalizar(linha[3]) if len(linha) > 3 else ""
-
-        if ped_plan != _normalizar(pedido):
-            continue
-        if not _palavras_em_comum(produto, prod_plan):
-            continue
-        if not _palavras_em_comum(cliente, cli_plan):
-            continue
-
-        linhas_atualizar.append(i)
-
-        # Soma os pesos já carregados (coluna I, índice 8)
-        if len(linha) > 8 and str(linha[8]).strip():
-            try:
-                total_ja_carregado += float(str(linha[8]).replace(",", "."))
-            except Exception:
-                pass
-
-    if not linhas_atualizar:
-        raise Exception(
-            f"Pedido {pedido} — {produto} do cliente {cliente} não encontrado na planilha de saldo."
-        )
-
-    # saldo_total real = o que o usuário quer de restante + o que já foi carregado
-    saldo_total_real = float(saldo_restante_desejado) + total_ja_carregado
-
-    requests = [
-        {"range": f"'{DADOS_ABA}'!E{n}", "values": [[saldo_total_real]]}
-        for n in linhas_atualizar
-    ]
-
-    sheet.values().batchUpdate(
-        spreadsheetId=DADOS_ID,
-        body={"valueInputOption": "USER_ENTERED", "data": requests},
-    ).execute()
-
-    return saldo_total_real, total_ja_carregado
+    return len(resp.get("values", []))
 
 
 def atualizar_status_base(conta, num_linha, novo_status, aba=None):
@@ -672,7 +825,8 @@ def gravar_ordem_dupla(conta, dados_ordem, filial, status="CONFERIDO", aba=None)
     # ── 1. BASE (controle de ordens) ──────────────────
     # append é atômico — não precisa buscar última linha
 
-    data         = str(dados_ordem.get("Data Apresentação", "")).upper()
+    # Data gravada como texto DD/MM/AAAA — evita interpretação incorreta pelo Sheets
+    data         = str(dados_ordem.get("Data Apresentação", "")).strip()
     motorista    = str(dados_ordem.get("Motorista", "")).upper()
     placa        = str(dados_ordem.get("Cavalo", "")).upper()
     fabrica      = str(dados_ordem.get("Fábrica", "")).upper()
@@ -687,9 +841,10 @@ def gravar_ordem_dupla(conta, dados_ordem, filial, status="CONFERIDO", aba=None)
     frete_mot    = str(dados_ordem.get("Frete/Mot", "")).upper()
     rota         = str(dados_ordem.get("Rota", "")).upper()
     agenciamento = str(dados_ordem.get("Agenciamento", "")).upper()
+    filial_upper = filial.upper() if filial else ""
 
     linha_fretes = [
-        data, filial, pagador, agencia, motorista,
+        data, filial_upper, pagador, agencia, motorista,
         placa, fabrica, destino, uf, peso,
         frete_emp, frete_mot, rota, agenciamento, status, pedido, produto
     ]
@@ -720,107 +875,66 @@ def _descontar_saldo_pedido(service, pedido, cliente, peso_num,
                              destino="", produto="", data="", placa="",
                              frete="", status=""):
     """
-    Insere uma linha de carregamento na planilha DADOS vinculada ao pedido.
-    O saldo_restante é calculado dinamicamente por carregar_blocos_dados
-    como: saldo_total - soma(pesos dos carregamentos do pedido).
-    Só grava se o pedido já estiver cadastrado na planilha de saldo.
+    Verifica se o pedido existe na aba PEDIDOS e insere uma linha
+    de carregamento na aba DADOS.
     Retorna True se gravou, False se pedido não encontrado.
+
+    Aba DADOS: PEDIDO | PRODUTO | CLIENTE | DATA | NOTA | PESO | FRETE | STATUS
     """
     sheet = service.spreadsheets()
 
-    # Busca o registro-mestre do pedido para obter destino/cliente/produto/saldo_total
+    # Verifica se o pedido existe na aba PEDIDOS
     resp = sheet.values().get(
         spreadsheetId=DADOS_ID,
-        range=f"'{DADOS_ABA}'!A:E",
+        range=f"'{PEDIDOS_ABA}'!A:E",
         valueRenderOption="UNFORMATTED_VALUE",
     ).execute()
 
-    valores      = resp.get("values", [])
-    dados_mestre = None
-    pedido_upper = str(pedido).strip().upper()
-    cliente_upper = str(cliente).strip().upper()
-    produto_upper = str(produto).strip().upper()
+    pedido_upper  = _normalizar(pedido)
+    produto_upper = _normalizar(produto)
+    cliente_upper = _normalizar(cliente)
 
-    def _normalizar(s):
-        """Remove espaços duplos, strip e upper."""
-        import re
-        return re.sub(r"\s+", " ", str(s).strip().upper())
+    encontrado = False
+    prod_final = produto
+    cli_final  = cliente
 
-    def _palavras_em_comum(a, b):
-        """Verifica se as palavras principais de 'a' existem em 'b' ou vice-versa."""
-        palavras_a = set(_normalizar(a).split())
-        palavras_b = set(_normalizar(b).split())
-        # Remove palavras muito curtas (artigos, preposições)
-        palavras_a = {p for p in palavras_a if len(p) > 2}
-        palavras_b = {p for p in palavras_b if len(p) > 2}
-        if not palavras_a or not palavras_b:
-            return True  # sem palavras suficientes, não bloqueia
-        # Considera match se pelo menos 60% das palavras da menor string estiver na outra
-        menor = palavras_a if len(palavras_a) <= len(palavras_b) else palavras_b
-        maior = palavras_b if len(palavras_a) <= len(palavras_b) else palavras_a
-        matches = sum(1 for p in menor if p in maior)
-        return matches / len(menor) >= 0.6
-
-    for linha in valores[1:]:
-        if len(linha) < 4:
+    for linha in resp.get("values", [])[1:]:
+        if len(linha) < 3:
             continue
-
         ped_plan  = _normalizar(linha[2])
         cli_plan  = _normalizar(linha[1]) if len(linha) > 1 else ""
         prod_plan = _normalizar(linha[3]) if len(linha) > 3 else ""
 
-        # 1. Pedido deve ser idêntico
         if ped_plan != pedido_upper:
             continue
-
-        # 2. Produto deve ter palavras em comum
         if produto_upper and prod_plan and not _palavras_em_comum(produto_upper, prod_plan):
             continue
-
-        # 3. Cliente deve ter palavras em comum
         if cliente_upper and cli_plan and not _palavras_em_comum(cliente_upper, cli_plan):
             continue
 
-        # Pega saldo_total — ignora linhas com saldo vazio mas continua procurando
-        saldo_total = 0
-        if len(linha) > 4 and str(linha[4]).strip():
-            try:
-                saldo_total = float(str(linha[4]).replace(",", "."))
-            except Exception:
-                saldo_total = 0
-
-        dados_mestre = (
-            str(linha[0]).strip() if linha[0] else destino,
-            str(linha[1]).strip() if len(linha) > 1 else cliente,
-            str(linha[2]).strip(),
-            str(linha[3]).strip() if len(linha) > 3 else produto,
-            saldo_total,
-        )
+        # Usa os valores exatos da planilha para consistência
+        prod_final = str(linha[3]).strip() if len(linha) > 3 else produto
+        cli_final  = str(linha[1]).strip() if len(linha) > 1 else cliente
+        encontrado = True
         break
 
-    if dados_mestre is None:
+    if not encontrado:
         return False
 
-    dest_final, cli_final, ped_final, prod_final, saldo_total = dados_mestre
-
-    # Insere linha de carregamento
-    sheet_id = _get_dados_sheet_id(service)
-    ultima   = _ultima_linha_dados(service)
-
+    # Insere carregamento na aba DADOS
+    # Colunas: PEDIDO | PRODUTO | CLIENTE | DATA | NOTA | PLACA | PESO | FRETE | STATUS
     valores_novo = [
-        dest_final,
-        cli_final,
-        ped_final,
+        pedido,
         prod_final,
-        saldo_total,           # repete o saldo_total (referência)
-        data,                  # DATA do carregamento
-        "",                    # NOTA (em branco — não temos aqui)
-        placa,                 # PLACA
-        str(peso_num),         # PESO carregado
-        frete,                 # FRETE
-        status or "CARREGADO", # STATUS
+        cli_final,
+        data,
+        "",                    # NOTA — preenchida manualmente na planilha
+        placa,
+        str(peso_num),
+        frete,
+        status or "CARREGADO",
     ]
-    _inserir_linha_dados(service, sheet_id, ultima, valores_novo)
+    _inserir_carregamento(service, valores_novo)
     return True
 
 
@@ -844,12 +958,13 @@ def _ultima_linha_base(service, aba=None):
 
 
 def _inserir_linha_base(service, sheet_id, linha_idx, valores, aba=None):
-    """Usa values().append — atômico e seguro para múltiplos usuários simultâneos."""
+    """Usa values().append — atômico e seguro para múltiplos usuários simultâneos.
+    Usa RAW para evitar que datas DD/MM/AAAA sejam convertidas para número serial."""
     aba_usar = aba or BASE_ABA
     service.spreadsheets().values().append(
         spreadsheetId=BASE_ID,
         range=f"'{aba_usar}'!A1",
-        valueInputOption="USER_ENTERED",
+        valueInputOption="RAW",
         insertDataOption="INSERT_ROWS",
         body={"values": [valores]},
     ).execute()

@@ -278,14 +278,19 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     motorista_completo = dados.get("Motorista", "SEM")
     primeiro_nome = limpar_nome(motorista_completo.split()[0] if motorista_completo else "SEM")
 
+    def _fmt_placa(valor):
+        """Formata placa para XXX-XXXX. Aplica apenas na gravação."""
+        if not valor or str(valor).strip() in ("", "SEM"):
+            return valor
+        limpo = re.sub(r"[^A-Za-z0-9]", "", str(valor)).upper()
+        return limpo[:3] + "-" + limpo[3:7] if len(limpo) > 3 else limpo
+
     cavalo_raw = dados.get("Cavalo", "SEM")
-                                                               
-    cavalo_limpo = re.sub(r"[^A-Za-z0-9]", "", cavalo_raw).upper()
-    if len(cavalo_limpo) > 3:
-        cavalo_formatado = cavalo_limpo[:3] + "-" + cavalo_limpo[3:7]
-    else:
-        cavalo_formatado = cavalo_limpo
-    dados["Cavalo"] = cavalo_formatado
+    cavalo_formatado = _fmt_placa(cavalo_raw)
+    dados["Cavalo"]    = cavalo_formatado
+    dados["Carreta 1"] = _fmt_placa(dados.get("Carreta 1", ""))
+    dados["Carreta 2"] = _fmt_placa(dados.get("Carreta 2", ""))
+    dados["Carreta 3"] = _fmt_placa(dados.get("Carreta 3", ""))
 
     cavalo = limpar_nome(cavalo_formatado)
 

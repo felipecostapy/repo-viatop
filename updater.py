@@ -24,6 +24,12 @@ ARQUIVOS = [
     "ordemtopv2.xlsx",
 ]
 
+# Arquivos baixados APENAS se não existirem localmente
+# (não sobrescreve edições feitas na máquina)
+ARQUIVOS_SOMENTE_SE_AUSENTES = [
+    "usuarios.json",
+]
+
 VERSION_LOCAL_FILE = "version.txt"
 VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}/version.txt"
 BASE_URL    = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/{GITHUB_BRANCH}"
@@ -217,14 +223,30 @@ def verificar_e_atualizar():
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(sys.argv)
 
-    dialog, lbl, bar = _mostrar_progresso(len(ARQUIVOS))
+    total = len(ARQUIVOS) + len(ARQUIVOS_SOMENTE_SE_AUSENTES)
+    dialog, lbl, bar = _mostrar_progresso(total)
 
     try:
+        # Arquivos que sempre são atualizados
         for i, arquivo in enumerate(ARQUIVOS, 1):
             lbl.setText(f"Baixando: {arquivo}")
             app.processEvents()
             _baixar_arquivo(arquivo)
             bar.setValue(i)
+            app.processEvents()
+
+        # Arquivos baixados apenas se não existirem localmente
+        offset = len(ARQUIVOS)
+        for i, arquivo in enumerate(ARQUIVOS_SOMENTE_SE_AUSENTES, 1):
+            dest = _pasta_app() / arquivo
+            if not dest.exists():
+                lbl.setText(f"Baixando: {arquivo}")
+                app.processEvents()
+                _baixar_arquivo(arquivo)
+            else:
+                lbl.setText(f"Mantendo local: {arquivo}")
+                app.processEvents()
+            bar.setValue(offset + i)
             app.processEvents()
 
         _salvar_versao(versao_remota)

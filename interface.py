@@ -9,7 +9,7 @@ from PySide6.QtCore import Qt, QDate, QThread, Signal, QTimer, QPropertyAnimatio
 from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon, QPalette
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
-from planilha import carregar_blocos_dados, gravar_carregamento, carregar_base
+from planilha import carregar_blocos_dados, carregar_base
 
 BG       = "#0d1117"
 SURFACE  = "#161b22"
@@ -408,9 +408,21 @@ class PlanilhaWidget(QWidget):
         """)
         btn_novo.clicked.connect(self._novo_pedido)
 
+        btn_migrar = QPushButton("⇄  MIGRAR DA BASE")
+        btn_migrar.setToolTip("Importa carregamentos da planilha BASE para as abas PEDIDOS e DADOS")
+        btn_migrar.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: #58a6ff; border: 1px solid #58a6ff;
+                border-radius: 6px; padding: 7px 14px; font-weight: 700; font-size: 12px;
+            }}
+            QPushButton:hover {{ background: #58a6ff18; }}
+        """)
+        btn_migrar.clicked.connect(self._migrar_da_base)
+
         topo.addWidget(titulo)
         topo.addStretch()
         topo.addWidget(self._combo_conta)
+        topo.addWidget(btn_migrar)
         topo.addWidget(btn_novo)
         topo.addWidget(btn_carregar)
         root.addLayout(topo)
@@ -624,6 +636,54 @@ class PlanilhaWidget(QWidget):
         bc.clicked.connect(dlg.reject)
         bo.clicked.connect(criar)
         dlg.exec()
+
+    def _migrar_da_base(self):
+        conta = self._combo_conta.currentText()
+        if conta == "(nenhuma conta)":
+            self._lbl_status.setText("Configure uma conta Gmail primeiro.")
+            return
+
+        resp = QMessageBox.question(
+            self, "Migrar da BASE",
+            "Isso irá importar todos os carregamentos com PEDIDO preenchido "
+            "das abas BASE MM/AAAA para as abas PEDIDOS e DADOS.\n\n"
+            "Registros já existentes não serão duplicados.\n\n"
+            "Deseja continuar?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if resp != QMessageBox.Yes:
+            return
+
+        self._lbl_status.setText("Migrando... aguarde.")
+        QApplication.processEvents()
+
+        try:
+            from planilha import migrar_base_para_dados
+
+            def progresso(msg):
+                self._lbl_status.setText(msg)
+                QApplication.processEvents()
+
+            resultado = migrar_base_para_dados(conta, callback_progresso=progresso)
+
+            abas = ", ".join(resultado["abas_lidas"])
+            msg = (
+                f"Migração concluída!\n\n"
+                f"Abas lidas: {abas}\n"
+                f"Total lido: {resultado['total_lido']} carregamento(s)\n"
+                f"Pedidos criados: {resultado['pedidos_criados']}\n"
+                f"Carregamentos migrados: {resultado['carregamentos_migrados']}\n\n"
+                f"Ajuste o SALDO_TOTAL de cada pedido usando o botão +/-."
+            )
+            QMessageBox.information(self, "Migração concluída", msg)
+            self._lbl_status.setText(
+                f"Migração OK — {resultado['pedidos_criados']} pedido(s), "
+                f"{resultado['carregamentos_migrados']} carregamento(s) importado(s)"
+            )
+            self._carregar()
+        except Exception as e:
+            QMessageBox.critical(self, "Erro na migração", str(e))
+            self._lbl_status.setText(f"Erro: {e}")
 
     def _atualizar_contas(self):
         self._combo_conta.clear()
@@ -1303,18 +1363,35 @@ class BaseWidget(QWidget):
     def _deletar_linha(self, row, dados):
         conta = self._combo_conta.currentText()
         resp = QMessageBox.question(
-            self, "Confirmar", "Deseja remover esta linha da planilha?",
+            self, "Confirmar",
+            "Deseja remover esta linha da planilha BASE?\n\n"
+            "Se houver um carregamento correspondente na planilha de Pedidos (DADOS), "
+            "ele também será removido.",
             QMessageBox.Yes | QMessageBox.No
         )
         if resp != QMessageBox.Yes:
             return
         try:
-            from planilha import deletar_linha_base
+            from planilha import deletar_linha_base, carregar_base_com_linhas
             num_linha = self._row_to_linha_planilha.get(row) or self._encontrar_linha_base(dados, conta)
             if num_linha:
-                deletar_linha_base(conta, num_linha, aba=self._aba_selecionada)
+                # Busca a linha completa para identificar o carregamento em DADOS
+                linha_completa = None
+                try:
+                    linhas = carregar_base_com_linhas(conta, aba=self._aba_selecionada)
+                    for n, l in linhas:
+                        if n == num_linha:
+                            linha_completa = l
+                            break
+                except Exception:
+                    pass
+                deletar_linha_base(
+                    conta, num_linha,
+                    aba=self._aba_selecionada,
+                    dados_linha=linha_completa
+                )
             self._tabela.removeRow(row)
-            self._lbl_status.setText("Linha removida com sucesso.")
+            self._lbl_status.setText("Linha removida da BASE e dos Pedidos.")
         except Exception as e:
             QMessageBox.critical(self, "Erro", str(e))
 
@@ -1331,6 +1408,27 @@ class BaseWidget(QWidget):
         return None
 
 
+# Mapa de fábricas → origem fixa
+# Chave: substring que aparece no nome da fábrica (uppercase)
+# Valor: origem a preencher
+ORIGENS_FABRICA = {
+    "FERTIMAXI":        "FEIRA DE SANTANA - BA",
+    "INTERMARITIMA":    "CANDEIAS - BA",
+    "ARMAZEM VITORIA":  "CANDEIAS - BA",
+    "ARMAZÉM VITÓRIA":  "CANDEIAS - BA",
+    "YARA":             "CANDEIAS - BA",
+    "TIMAC":            "CAMAÇARI - BA",
+}
+
+def _origem_por_fabrica(fabrica):
+    """Retorna a origem fixa para uma fábrica, ou '' se não reconhecida."""
+    t = fabrica.upper().strip()
+    for chave, origem in ORIGENS_FABRICA.items():
+        if chave in t:
+            return origem
+    return ""
+
+
 def parsear_mensagem_whatsapp(texto):
     resultado = {}
 
@@ -1341,20 +1439,45 @@ def parsear_mensagem_whatsapp(texto):
     filial = extrair("FILIAL").upper()
     resultado["empresa"] = "Agrovia" if "AGRO" in filial else "TopBrasil"
 
-    # PAGADOR → Solicitante
-    pagador = extrair("PAGADOR")
-    if pagador:
-        resultado["Solicitante"] = pagador
+    # ── PAGADOR e CLIENTE ────────────────────────────────────────────
+    # Regras:
+    # - PAGADOR → Solicitante (quem paga o frete)
+    # - CLIENTE → Cliente (destinatário da mercadoria)
+    # - Se a tag tiver PAGADOR e CLIENTE na mesma linha (ex: "PAGADOR/CLIENTE: NOME"),
+    #   ambos recebem o mesmo valor
+    # - Se só PAGADOR existir (sem CLIENTE), PAGADOR vai para Solicitante apenas
+    # - Se só CLIENTE existir (sem PAGADOR), vai para Cliente apenas
 
-    # FABRICA → Fábrica (nome) e Origem
+    pagador = extrair("PAGADOR")
+    cliente = extrair("CLIENTE")
+
+    # Verifica se PAGADOR e CLIENTE estão na mesma linha da tag
+    match_mesmo = re.search(
+        r"^(PAGADOR|CLIENTE)\s*/\s*(PAGADOR|CLIENTE)\s*:\s*(.+)",
+        texto, re.IGNORECASE | re.MULTILINE
+    )
+    if match_mesmo:
+        # Mesma linha — preenche ambos com o mesmo valor
+        valor_comum = match_mesmo.group(3).strip()
+        resultado["Solicitante"] = valor_comum
+        resultado["Cliente"]     = valor_comum
+    else:
+        if pagador:
+            resultado["Solicitante"] = pagador
+        if cliente:
+            resultado["Cliente"] = cliente
+
+    # ── FÁBRICA e ORIGEM ─────────────────────────────────────────────
+    # Origem é sempre definida pela fábrica (fixa por regra)
+    # Nunca sobrescreve com o texto livre da tag
     fabrica = extrair("FABRICA")
     if fabrica:
+        # Guarda apenas o primeiro token como nome da fábrica no campo
         resultado["Fábrica"] = fabrica.upper().split()[0]
-        resultado["Origem"]  = fabrica
-
-    cliente = extrair("CLIENTE")
-    if cliente:
-        resultado["Cliente"] = cliente
+        origem_fixa = _origem_por_fabrica(fabrica)
+        if origem_fixa:
+            resultado["Origem"] = origem_fixa
+        # Se fábrica não reconhecida, deixa Origem em branco (usuário preenche)
 
     resultado["Motorista"] = extrair("MOTORISTA")
     resultado["Cavalo"]    = extrair("PLACA")
@@ -1822,14 +1945,9 @@ class UI(QWidget):
         v.addLayout(r1)
 
         def _atualizar_origem(texto):
-            t = texto.upper().strip()
-            origem = self.entradas["Origem"]
-            if "FERTIMAXI" in t:
-                origem.setText("FEIRA DE SANTANA - BA")
-            elif "INTERMARITIMA" in t or ("TIMAC" in t and "CAMACARI" not in t and "CAMAÇARI" not in t):
-                origem.setText("CANDEIAS - BA")
-            elif "TIMAC" in t and ("CAMACARI" in t or "CAMAÇARI" in t):
-                origem.setText("CAMAÇARI - BA")
+            origem_fixa = _origem_por_fabrica(texto)
+            if origem_fixa:
+                self.entradas["Origem"].setText(origem_fixa)
 
         self.entradas["Fábrica"].textChanged.connect(_atualizar_origem)
 
@@ -1910,7 +2028,6 @@ class UI(QWidget):
         self.entradas["Carroceria"].setCurrentIndex(-1)
         self.entradas["Carroceria"].lineEdit().setPlaceholderText("Selecione...")
         self.entradas["Cavalo"] = make_input()
-        self.entradas["Cavalo"].textChanged.connect(lambda t, i=self.entradas["Cavalo"]: _forcar_maiusculo(i, t))
         r1.addWidget(make_field("Carroceria", self.entradas["Carroceria"]), 1)
         r1.addWidget(make_field("Cavalo", self.entradas["Cavalo"]), 1)
         v.addLayout(r1)
@@ -2138,17 +2255,7 @@ class UI(QWidget):
         self.entradas["Data Apresentação"].setDate(QDate.currentDate())
 
     def escolher_empresa(self):
-        # Tenta buscar usuários da planilha centralizada primeiro
-        conta = self._planilha_widget._combo_conta.currentText() if hasattr(self, '_planilha_widget') else ""
-        usuarios = None
-        if conta and conta != "(nenhuma conta)":
-            try:
-                from planilha import carregar_usuarios_planilha
-                usuarios = carregar_usuarios_planilha(conta)
-            except Exception:
-                pass
-        if not usuarios:
-            usuarios = carregar_usuarios()   # fallback local
+        usuarios = carregar_usuarios()
         is_primeiro_login = not self.usuario_logado
 
         dlg = QDialog(self)
@@ -2292,8 +2399,39 @@ class UI(QWidget):
             return
 
         dados = self.coletar()
-        if not dados.get("Motorista") or not dados.get("Cavalo"):
-            QMessageBox.warning(self, "Atenção", "Preencha Motorista e Cavalo")
+
+        # ── Validações obrigatórias ──────────────────────────
+        erros = []
+
+        if not dados.get("Motorista"):
+            erros.append("• Motorista")
+        if not dados.get("Cavalo"):
+            erros.append("• Cavalo (Placa)")
+
+        # Carroceria obrigatória
+        carroceria = dados.get("Carroceria", "").strip()
+        if not carroceria:
+            erros.append("• Carroceria")
+
+        # Embalagem obrigatória em cada linha de pedido ativa
+        for i, (stack, linha) in enumerate(self._pedido_linhas):
+            if stack.currentIndex() == 1:   # linha ativa (mostrando inputs)
+                sufixo = f" {i + 1}" if i > 0 else ""
+                emb_key = f"Embalagem{sufixo}"
+                ped_key = f"Pedido{sufixo}"
+                # Só exige embalagem se o pedido estiver preenchido
+                if dados.get(ped_key, "").strip():
+                    emb = dados.get(emb_key, "").strip()
+                    if not emb:
+                        label = f"Pedido {i + 1}" if i > 0 else "Pedido"
+                        erros.append(f"• Embalagem ({label})")
+
+        if erros:
+            QMessageBox.warning(
+                self, "Campos obrigatórios",
+                "Preencha os campos obrigatórios antes de gerar a ordem:\n\n" +
+                "\n".join(erros)
+            )
             return
 
         conta_gmail = None
