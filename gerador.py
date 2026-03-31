@@ -339,8 +339,20 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         wb = xw.Book(caminho)
         ws = wb.sheets[0]
 
+        CAMPOS_DATA = {"Data Apresentação", "Data Geração"}
+
         for campo, celula in CAMPOS.items():
             valor = dados.get(campo, "")
+            # Datas: converte DD/MM/AAAA para objeto date do Python
+            # para que o Excel grave corretamente sem depender da localização
+            if campo in CAMPOS_DATA and valor:
+                try:
+                    import datetime as _dt
+                    partes = str(valor).strip().split("/")
+                    if len(partes) == 3:
+                        valor = _dt.date(int(partes[2]), int(partes[1]), int(partes[0]))
+                except Exception:
+                    pass  # mantém como string se falhar
             if isinstance(celula, list):
                 for c in celula:
                     ws.range(c).value = valor

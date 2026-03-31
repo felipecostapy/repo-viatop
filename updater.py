@@ -28,6 +28,7 @@ ARQUIVOS = [
 # (não sobrescreve edições feitas na máquina)
 ARQUIVOS_SOMENTE_SE_AUSENTES = [
     "usuarios.json",
+    "contas_empresa.json",
 ]
 
 VERSION_LOCAL_FILE = "version.txt"

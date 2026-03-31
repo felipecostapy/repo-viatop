@@ -681,6 +681,90 @@ def deletar_linha_base(conta, num_linha, aba=None, dados_linha=None):
 # Colunas: DESTINO | CLIENTE | PEDIDO | PRODUTO | SALDO_TOTAL
 # ═══════════════════════════════════════════════════════════════════
 
+def remover_pedido_dados(conta, cliente, pedido, produto):
+    """
+    Remove o pedido da aba PEDIDOS e todos os seus carregamentos da aba DADOS.
+    Retorna dict com quantas linhas foram removidas de cada aba.
+    """
+    service = _autenticar(conta)
+    sheet   = service.spreadsheets()
+
+    # ── 1. Remove da aba PEDIDOS ──────────────────────────────────
+    resp_ped = sheet.values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{PEDIDOS_ABA}'!A:D",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+
+    linhas_pedido = []
+    for i, linha in enumerate(resp_ped.get("values", [])[1:], 2):
+        if len(linha) < 3:
+            continue
+        if (_normalizar(linha[2]) == _normalizar(pedido) and
+            _palavras_em_comum(linha[3] if len(linha) > 3 else "", produto) and
+            _palavras_em_comum(linha[1] if len(linha) > 1 else "", cliente)):
+            linhas_pedido.append(i)
+
+    # ── 2. Remove da aba DADOS ────────────────────────────────────
+    resp_dados = sheet.values().get(
+        spreadsheetId=DADOS_ID,
+        range=f"'{DADOS_ABA}'!A:C",
+        valueRenderOption="UNFORMATTED_VALUE",
+    ).execute()
+
+    linhas_dados = []
+    for i, linha in enumerate(resp_dados.get("values", [])[1:], 2):
+        if len(linha) < 1:
+            continue
+        if (_normalizar(linha[0]) == _normalizar(pedido) and
+            _palavras_em_comum(linha[1] if len(linha) > 1 else "", produto) and
+            _palavras_em_comum(linha[2] if len(linha) > 2 else "", cliente)):
+            linhas_dados.append(i)
+
+    if not linhas_pedido:
+        raise Exception(
+            f"Pedido {pedido} — {produto} do cliente {cliente} não encontrado na aba PEDIDOS."
+        )
+
+    # Deleta em ordem decrescente para não deslocar índices
+    def _deletar_linhas(spreadsheet_id, aba_nome, numeros_linha):
+        if not numeros_linha:
+            return
+        meta     = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+        sheet_id = None
+        for s in meta["sheets"]:
+            if s["properties"]["title"] == aba_nome:
+                sheet_id = s["properties"]["sheetId"]
+                break
+        if sheet_id is None:
+            return
+        # Ordena decrescente para deletar de baixo para cima
+        requests = []
+        for n in sorted(set(numeros_linha), reverse=True):
+            requests.append({
+                "deleteDimension": {
+                    "range": {
+                        "sheetId":    sheet_id,
+                        "dimension":  "ROWS",
+                        "startIndex": n - 1,
+                        "endIndex":   n,
+                    }
+                }
+            })
+        service.spreadsheets().batchUpdate(
+            spreadsheetId=spreadsheet_id,
+            body={"requests": requests}
+        ).execute()
+
+    _deletar_linhas(DADOS_ID, PEDIDOS_ABA, linhas_pedido)
+    _deletar_linhas(DADOS_ID, DADOS_ABA,   linhas_dados)
+
+    return {
+        "pedidos_removidos":       len(linhas_pedido),
+        "carregamentos_removidos": len(linhas_dados),
+    }
+
+
 def criar_pedido_dados(conta, destino, cliente, pedido, produto, saldo_total):
     """Cadastra um novo pedido na aba PEDIDOS. Uma linha por pedido."""
     service = _autenticar(conta)

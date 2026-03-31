@@ -191,6 +191,26 @@ USUARIOS = {
     "RAFAEL":   "Rafael Lima",
 }
 
+def _contas_empresa_path():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent / "contas_empresa.json"
+    return Path(__file__).parent / "contas_empresa.json"
+
+def carregar_contas_empresa():
+    """Retorna dict {empresa: conta_gmail}. Ex: {'Agrovia': 'agro@gmail.com'}"""
+    path = _contas_empresa_path()
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+def salvar_contas_empresa(mapa):
+    path = _contas_empresa_path()
+    path.write_text(json.dumps(mapa, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _usuarios_path():
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent / "usuarios.json"
@@ -565,6 +585,54 @@ class PlanilhaWidget(QWidget):
         bo.clicked.connect(confirmar)
         dlg.exec()
 
+    def _remover_pedido(self, bloco):
+        conta = self._combo_conta.currentText()
+        if conta == "(nenhuma conta)":
+            return
+
+        cliente  = bloco.get("cliente", "")
+        pedido   = bloco.get("pedido", "")
+        produto  = bloco.get("produto", "")
+        n_carrs  = len(bloco.get("linhas", []))
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Remover Pedido")
+        msg.setIcon(QMessageBox.NoIcon)
+        msg.setText(
+            f"Deseja remover este pedido permanentemente?\n\n"
+            f"Cliente: {cliente}\n"
+            f"Pedido: {pedido}\n"
+            f"Produto: {produto}\n\n"
+            f"Isso também removerá {n_carrs} carregamento(s) vinculado(s)."
+        )
+        msg.setStyleSheet(f"""
+            QMessageBox {{ background-color: {BG}; }}
+            QLabel {{ color: {TEXT}; font-size: 13px; }}
+            QPushButton {{
+                border-radius: 6px; padding: 7px 18px;
+                font-weight: 700; font-size: 12px; min-width: 80px;
+            }}
+        """)
+        btn_sim = msg.addButton("REMOVER", QMessageBox.AcceptRole)
+        btn_sim.setStyleSheet(f"background-color: {DANGER}; color: white; border: none;")
+        btn_nao = msg.addButton("CANCELAR", QMessageBox.RejectRole)
+        btn_nao.setStyleSheet(f"background-color: transparent; border: 1px solid {BORDER2}; color: {MUTED};")
+        msg.exec()
+
+        if msg.clickedButton() != btn_sim:
+            return
+
+        try:
+            from planilha import remover_pedido_dados
+            resultado = remover_pedido_dados(conta, cliente, pedido, produto)
+            self._lbl_status.setText(
+                f"Pedido {pedido} removido — "
+                f"{resultado['carregamentos_removidos']} carregamento(s) excluído(s)"
+            )
+            self._carregar()
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", str(e))
+
     def _novo_pedido(self):
         conta = self._combo_conta.currentText()
         if conta == "(nenhuma conta)":
@@ -785,6 +853,7 @@ class PlanilhaWidget(QWidget):
         h_lay.setSpacing(6)
 
         top = QHBoxLayout()
+        top.setSpacing(4)
         lbl_dest = QLabel(b["cliente"].upper())
         lbl_dest.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700; background: transparent;")
         lbl_dest.setWordWrap(True)
@@ -808,24 +877,47 @@ class PlanilhaWidget(QWidget):
         p_s = QPalette(); p_s.setColor(QPalette.ButtonText, QColor("#58a6ff")); btn_saldo.setPalette(p_s)
         btn_saldo.clicked.connect(lambda _, bloco=b: self._ajustar_saldo(bloco))
 
-        btn_expand = QPushButton("▶")
-        btn_expand.setFixedSize(22, 22)
-        btn_expand.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; border: none;
-                color: {MUTED}; font-size: 10px;
-            }}
-            QPushButton:hover {{ color: {TEXT}; }}
-        """)
+        # QLabel clicável — renderiza corretamente com background transparent no PySide6
+        class IconLabel(QLabel):
+            def __init__(self, texto, cor_normal, cor_hover, callback, parent=None):
+                super().__init__(texto, parent)
+                self._cor    = cor_normal
+                self._hover  = cor_hover
+                self._cb     = callback
+                self.setFixedSize(22, 22)
+                self.setAlignment(Qt.AlignCenter)
+                self.setCursor(Qt.PointingHandCursor)
+                self._aplicar(False)
+            def _aplicar(self, hover):
+                cor = self._hover if hover else self._cor
+                self.setStyleSheet(
+                    f"QLabel {{ background: transparent; border: none;"
+                    f" color: {cor}; font-size: 13px; }}"
+                )
+            def enterEvent(self, e):  self._aplicar(True)
+            def leaveEvent(self, e):  self._aplicar(False)
+            def mousePressEvent(self, e):
+                if e.button() == Qt.LeftButton:
+                    self._cb()
 
+        bloco_ref = b
+        btn_remover = IconLabel("🗑", MUTED, DANGER,
+                                lambda b=bloco_ref: self._remover_pedido(b))
+        btn_remover.setToolTip("Remover pedido e todos os carregamentos")
+
+        btn_expand = IconLabel("▶", MUTED, TEXT, lambda: None)
         self._expand_btns.append(btn_expand)
         idx = len(self._expand_btns) - 1
 
         top.addWidget(lbl_dest, 1)
         top.addWidget(lbl_saldo)
         top.addWidget(btn_saldo)
+        top.addWidget(btn_remover)
         top.addWidget(btn_expand)
         h_lay.addLayout(top)
+
+        # callback preenchido depois que toggle() é definido
+        _expand_callbacks = [None]
 
         def info_row(label, valor):
             h = QHBoxLayout()
@@ -937,16 +1029,18 @@ class PlanilhaWidget(QWidget):
             for j, btn in enumerate(self._expand_btns):
                 try:
                     btn.setText("▶")
+                    btn._aplicar(False)
                 except RuntimeError:
                     pass
             if not expanded:
                 try:
                     detalhe.setVisible(True)
                     self._expand_btns[my_idx].setText("▼")
+                    self._expand_btns[my_idx]._aplicar(False)
                 except RuntimeError:
                     pass
 
-        btn_expand.clicked.connect(toggle)
+        btn_expand._cb = toggle
         header.mousePressEvent = lambda e: toggle()
 
         return outer, detalhe
@@ -1421,10 +1515,14 @@ ORIGENS_FABRICA = {
 }
 
 def _origem_por_fabrica(fabrica):
-    """Retorna a origem fixa para uma fábrica, ou '' se não reconhecida."""
-    t = fabrica.upper().strip()
+    """Retorna a origem fixa para uma fábrica, ou '' se não reconhecida.
+    Normaliza acentos para garantir match independente de grafia."""
+    import unicodedata
+    def _norm(s):
+        return unicodedata.normalize("NFD", s.upper().strip())                .encode("ascii", "ignore").decode("ascii")
+    t = _norm(fabrica)
     for chave, origem in ORIGENS_FABRICA.items():
-        if chave in t:
+        if _norm(chave) in t:
             return origem
     return ""
 
@@ -1457,15 +1555,20 @@ def parsear_mensagem_whatsapp(texto):
         texto, re.IGNORECASE | re.MULTILINE
     )
     if match_mesmo:
-        # Mesma linha — preenche ambos com o mesmo valor
+        # Mesma linha — o valor é o cliente, Solicitante fica vazio
         valor_comum = match_mesmo.group(3).strip()
-        resultado["Solicitante"] = valor_comum
-        resultado["Cliente"]     = valor_comum
+        resultado["Cliente"] = valor_comum
     else:
-        if pagador:
-            resultado["Solicitante"] = pagador
         if cliente:
             resultado["Cliente"] = cliente
+        if pagador:
+            # Solicitante só é preenchido se PAGADOR for diferente do CLIENTE
+            # Quando são iguais, o próprio cliente é o pagador — Solicitante fica vazio
+            def _norm(s):
+                import unicodedata
+                return unicodedata.normalize("NFD", str(s).strip().upper()).encode("ascii","ignore").decode()
+            if not cliente or _norm(pagador) != _norm(cliente):
+                resultado["Solicitante"] = pagador
 
     # ── FÁBRICA e ORIGEM ─────────────────────────────────────────────
     # Origem é sempre definida pela fábrica (fixa por regra)
@@ -2461,22 +2564,52 @@ class UI(QWidget):
         self._thread.start()
 
     def _dialog_escolher_conta(self):
+        contas        = _listar_contas_gmail()
+        mapa_empresa  = carregar_contas_empresa()
+        empresa_atual = self.empresa or ""
+
+        # Se há uma conta mapeada para esta empresa, usa direto sem diálogo
+        conta_mapeada = mapa_empresa.get(empresa_atual)
+        if conta_mapeada and conta_mapeada in contas:
+            return conta_mapeada
+
+        # Caso contrário, abre o diálogo para escolher e opcionalmente fixar
         dlg = QDialog(self)
         dlg.setWindowTitle("Enviar por Gmail")
-        dlg.setFixedSize(400, 230)
+        dlg.setFixedSize(420, 290)
         dlg.setStyleSheet(DIALOG_SS)
 
         lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(10)
+
+        # Info da empresa
+        if empresa_atual:
+            lbl_emp = QLabel(f"Empresa: {empresa_atual}")
+            lbl_emp.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+            lay.addWidget(lbl_emp)
 
         lay.addWidget(QLabel("Conta remetente:"))
 
         combo = QComboBox()
         combo.setMinimumHeight(36)
-        contas = _listar_contas_gmail()
         combo.addItems(contas if contas else ["(nenhuma conta configurada)"])
+
+        # Pré-seleciona a conta mapeada se existir mas não estiver disponível,
+        # ou a primeira da lista
+        if conta_mapeada:
+            idx = combo.findText(conta_mapeada)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+
         lay.addWidget(combo)
+
+        # Checkbox para fixar esta conta para a empresa
+        chk_fixar = QCheckBox(f"Usar sempre esta conta para {empresa_atual}")
+        chk_fixar.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        chk_fixar.setChecked(bool(conta_mapeada))
+        if empresa_atual:
+            lay.addWidget(chk_fixar)
 
         btn_add = QPushButton("+ Adicionar conta Gmail")
         btn_add.setObjectName("btn_add")
@@ -2506,6 +2639,16 @@ class UI(QWidget):
             if c == "(nenhuma conta configurada)":
                 QMessageBox.warning(dlg, "Atenção", "Adicione uma conta Gmail primeiro.")
                 return
+            # Salva mapeamento se checkbox marcado
+            if empresa_atual and chk_fixar.isChecked():
+                mapa = carregar_contas_empresa()
+                mapa[empresa_atual] = c
+                salvar_contas_empresa(mapa)
+            elif empresa_atual and not chk_fixar.isChecked():
+                # Remove mapeamento se desmarcou
+                mapa = carregar_contas_empresa()
+                mapa.pop(empresa_atual, None)
+                salvar_contas_empresa(mapa)
             resultado[0] = c
             dlg.accept()
 
