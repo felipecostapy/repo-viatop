@@ -207,11 +207,28 @@ def _mostrar_erro(mensagem):
     msg.exec()
 
 def verificar_e_atualizar():
-                                                   
     _baixar_credentials()
 
     versao_local  = _ler_versao_local()
     versao_remota = _ler_versao_remota()
+
+    # Grava log de versão para diagnóstico
+    try:
+        log_path = _pasta_app() / "update_log.txt"
+        import datetime
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(f"[{datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}]\n")
+            f.write(f"Local:  {versao_local}\n")
+            f.write(f"Remota: {versao_remota}\n")
+            f.write(f"URL:    {VERSION_URL}\n")
+            if not versao_remota:
+                f.write("Resultado: sem conexao ou URL inacessivel\n")
+            elif not _versao_maior(versao_remota, versao_local):
+                f.write("Resultado: versao local ja atualizada\n")
+            else:
+                f.write("Resultado: atualizacao disponivel\n")
+    except Exception:
+        pass
 
     if not versao_remota:
         return

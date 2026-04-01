@@ -2931,16 +2931,6 @@ class UI(QWidget):
     def _dialog_preview_email(self, destinatario, assunto, corpo):
         from gerador import REGRAS_EMAIL
 
-        # Monta lista plana de emails únicos a partir de REGRAS_EMAIL
-        emails_rapidos = []
-        vistos = set()
-        for valor in REGRAS_EMAIL.values():
-            for email in valor.split(";"):
-                email = email.strip()
-                if email and email not in vistos and "@" in email:
-                    emails_rapidos.append(email)
-                    vistos.add(email)
-
         dlg = QDialog(self)
         dlg.setWindowTitle("Prévia do email")
         dlg.setMinimumWidth(540)
@@ -3064,10 +3054,8 @@ class UI(QWidget):
         lay.addWidget(inp_d)
 
         # Atualiza botões ao editar o campo manualmente
-        if emails_rapidos:
-            inp_d.textChanged.connect(lambda _: _atualizar_botoes())
-            # Estado inicial dos botões
-            _atualizar_botoes()
+        inp_d.textChanged.connect(lambda _: _atualizar_botoes())
+        _atualizar_botoes()
 
         lay.addWidget(QLabel("ASSUNTO"))
         inp_a = QLineEdit(assunto); inp_a.setMinimumHeight(36)
@@ -3129,6 +3117,11 @@ class UI(QWidget):
     def _dialog_gravar_planilha(self, dados):
         conta = self._planilha_widget._combo_conta.currentText()
         if not conta or conta == "(nenhuma conta)":
+            # Sem conta configurada — avisa e pede para selecionar
+            QMessageBox.warning(
+                self, "Nenhuma conta configurada",
+                "Configure uma conta Gmail na aba 'Controle de Pedidos' para gravar na planilha."
+            )
             return
 
         dlg = QDialog(self)
