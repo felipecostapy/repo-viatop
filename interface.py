@@ -35,6 +35,22 @@ DIALOG_SS = f"""
         font-size: 13px;
     }}
     QLineEdit:focus, QTextEdit:focus {{ border-color: {ACCENT}; }}
+    QComboBox:focus {{ border-color: {ACCENT}; }}
+    QComboBox::drop-down {{ border: none; width: 20px; }}
+    QComboBox::down-arrow {{
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid {MUTED};
+        width: 0; height: 0; margin-right: 6px;
+    }}
+    QComboBox QAbstractItemView {{
+        background-color: {SURFACE};
+        border: 1px solid {BORDER2};
+        color: {TEXT};
+        selection-background-color: {ACCENT}33;
+        selection-color: {TEXT};
+        outline: none;
+    }}
     QPushButton {{
         border-radius: 6px;
         padding: 9px 18px;
@@ -1572,7 +1588,11 @@ ORIGENS_FABRICA = {
     "FERTIMAXI":        "FEIRA DE SANTANA - BA",
     "INTERMARITIMA":    "CANDEIAS - BA",
     "ARMAZEM VITORIA":  "CANDEIAS - BA",
+    "ARMAZEM VITÓRIA":  "CANDEIAS - BA",
+    "ARMAZÉM VITORIA":  "CANDEIAS - BA",
     "ARMAZÉM VITÓRIA":  "CANDEIAS - BA",
+    "AZ VITORIA":       "CANDEIAS - BA",
+    "AZ VITÓRIA":       "CANDEIAS - BA",
     "YARA":             "CANDEIAS - BA",
     "TIMAC":            "CAMAÇARI - BA",
 }
@@ -1631,15 +1651,14 @@ def parsear_mensagem_whatsapp(texto):
                 import unicodedata
                 return unicodedata.normalize("NFD", str(s).strip().upper()).encode("ascii","ignore").decode()
             if not cliente or _norm(pagador) != _norm(cliente):
-                resultado["Solicitante"] = pagador
+                resultado["Pagador"] = pagador
 
     # ── FÁBRICA e ORIGEM ─────────────────────────────────────────────
     # Origem é sempre definida pela fábrica (fixa por regra)
     # Nunca sobrescreve com o texto livre da tag
     fabrica = extrair("FABRICA")
     if fabrica:
-        # Guarda apenas o primeiro token como nome da fábrica no campo
-        resultado["Fábrica"] = fabrica.upper().split()[0]
+        resultado["Fábrica"] = fabrica.strip().upper()
         origem_fixa = _origem_por_fabrica(fabrica)
         if origem_fixa:
             resultado["Origem"] = origem_fixa
@@ -1676,34 +1695,39 @@ def parsear_mensagem_whatsapp(texto):
 
     produto = extrair("PRODUTO")
 
-    # Detecta embalagem no texto do produto e remove do nome do produto
-    embalagem = ""
-    prod_upper = produto.upper()
-    EMBALAGENS_MAP = [
-        ("BIG BAG",     "BIG BAG"),
-        ("GRANEL",      "GRANEL"),
-        ("PALETIZADO",  "PALETIZADO"),
-        ("SACO 50KG",   "SACO 50KG"),
-        ("SACO 50",     "SACO 50KG"),
-        ("SACO 25KG",   "SACO 25KG"),
-        ("SACO 25",     "SACO 25KG"),
-        ("SACO 40KG",   "SACO 40KG"),
-        ("SACO 40",     "SACO 40KG"),
-    ]
-    produto_limpo = produto
-    for token, emb_label in EMBALAGENS_MAP:
-        if token in prod_upper:
-            embalagem = emb_label
-            # Remove o token do nome do produto (case-insensitive) e limpa espaços/hífens sobrando
-            produto_limpo = re.sub(
-                rf"[-–\s]*{re.escape(token)}[-–\s]*",
-                " ", produto, flags=re.IGNORECASE
-            ).strip(" -–")
-            break
-
-    resultado["Produto"] = produto_limpo
-    if embalagem:
-        resultado["Embalagem"] = embalagem
+    # Tenta extrair EMBALAGEM como campo separado da tag
+    embalagem_tag = extrair("EMBALAGEM")
+    if embalagem_tag:
+        resultado["Produto"]   = produto.strip()
+        resultado["Embalagem"] = embalagem_tag.strip().upper()
+    else:
+        # Fallback: detecta embalagem dentro do texto do produto
+        embalagem = ""
+        prod_upper = produto.upper()
+        EMBALAGENS_MAP = [
+            ("BIG BAG",    "BIG BAG"),
+            ("GRANEL",     "GRANEL"),
+            ("PALETIZADO", "PALETIZADO"),
+            ("SACO 50KG",  "SACO 50KG"),
+            ("SACO 50",    "SACO 50KG"),
+            ("SACO 25KG",  "SACO 25KG"),
+            ("SACO 25",    "SACO 25KG"),
+            ("SACO 40KG",  "SACO 40KG"),
+            ("SACO 40",    "SACO 40KG"),
+        ]
+        produto_limpo = produto
+        for token, emb_label in EMBALAGENS_MAP:
+            if token in prod_upper:
+                embalagem = emb_label
+                import re as _re
+                produto_limpo = _re.sub(
+                    r"[-–\s]*" + _re.escape(token) + r"[-–\s]*",
+                    " ", produto, flags=_re.IGNORECASE
+                ).strip(" -–")
+                break
+        resultado["Produto"] = produto_limpo
+        if embalagem:
+            resultado["Embalagem"] = embalagem
 
     destino_raw = extrair("DESTINO")
     uf = extrair("UF").upper()
@@ -2309,10 +2333,10 @@ class UI(QWidget):
         r1 = QHBoxLayout(); r1.setSpacing(6)
         self.entradas["Data Apresentação"] = make_date()
         self.entradas["Fábrica"]    = make_input()
-        self.entradas["Solicitante"] = make_input()
+        self.entradas["Pagador"] = make_input()
         r1.addWidget(make_field("Data", self.entradas["Data Apresentação"]), 1)
         r1.addWidget(make_field("Fábrica", self.entradas["Fábrica"]), 2)
-        r1.addWidget(make_field("Solicitante", self.entradas["Solicitante"]), 2)
+        r1.addWidget(make_field("Pagador", self.entradas["Pagador"]), 2)
         v.addLayout(r1)
 
         def _atualizar_origem(texto):
@@ -2812,9 +2836,9 @@ class UI(QWidget):
             conta_gmail = self._dialog_escolher_conta()
             if conta_gmail is None:
                 return
-            from gerador import obter_email_fabrica, montar_email
+            from gerador import montar_email
             prev = self._dialog_preview_email(
-                obter_email_fabrica(dados.get("Fábrica")),
+                "",
                 *montar_email(dados)
             )
             if prev is None:
@@ -2931,6 +2955,16 @@ class UI(QWidget):
     def _dialog_preview_email(self, destinatario, assunto, corpo):
         from gerador import REGRAS_EMAIL
 
+        # Coleta todos os emails cadastrados em REGRAS_EMAIL
+        todos_emails = []
+        vistos = set()
+        for valor in REGRAS_EMAIL.values():
+            for em in valor.split(";"):
+                em = em.strip()
+                if em and "@" in em and em not in vistos:
+                    todos_emails.append(em)
+                    vistos.add(em)
+
         dlg = QDialog(self)
         dlg.setWindowTitle("Prévia do email")
         dlg.setMinimumWidth(540)
@@ -2940,122 +2974,69 @@ class UI(QWidget):
         lay.setContentsMargins(20, 20, 20, 20)
         lay.setSpacing(8)
 
-        # ── Grupos expansíveis por fábrica ──────────────
-        lbl_rapido = QLabel("E-MAILS RÁPIDOS")
-        lbl_rapido.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
-        lay.addWidget(lbl_rapido)
+        # ── Destinatário com botões de email ─────────────
+        lbl_dest = QLabel("DESTINATÁRIO")
+        lbl_dest.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+        lay.addWidget(lbl_dest)
 
-        email_btns = {}
-
-        def _make_btn_email(email):
-            btn = QPushButton(email)
-            btn.setCheckable(True)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    border: 1px solid {BORDER2};
-                    border-radius: 5px;
-                    color: {MUTED};
-                    font-size: 10px;
-                    padding: 4px 8px;
-                }}
-                QPushButton:checked {{
-                    background: {ACCENT}22;
-                    border-color: {ACCENT};
-                    color: {ACCENT};
-                    font-weight: 700;
-                }}
-                QPushButton:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
-            """)
-            return btn
-
-        def _atualizar_botoes():
-            atual = set(e.strip() for e in inp_d.text().split(";") if e.strip())
-            for em, b in email_btns.items():
-                b.blockSignals(True)
-                b.setChecked(em in atual)
-                b.blockSignals(False)
-
-        def _toggle_email(email):
-            atual = [e.strip() for e in inp_d.text().split(";") if e.strip()]
-            if email in atual:
-                atual.remove(email)
-            else:
-                atual.append(email)
-            inp_d.setText(";".join(atual))
-
-        # Monta um grupo expansível por fábrica
-        for fabrica, valor in REGRAS_EMAIL.items():
-            emails_fab = [e.strip() for e in valor.split(";") if e.strip() and "@" in e]
-            if not emails_fab:
-                continue
-
-            # Container do grupo
-            grupo = QWidget()
-            grupo.setStyleSheet(f"background: {BG}; border: 1px solid {BORDER}; border-radius: 6px;")
-            v_grupo = QVBoxLayout(grupo)
-            v_grupo.setContentsMargins(0, 0, 0, 0)
-            v_grupo.setSpacing(0)
-
-            # Header clicável
-            header = QPushButton(f"▶  {fabrica}  ({len(emails_fab)} email{'s' if len(emails_fab) > 1 else ''})")
-            header.setCheckable(True)
-            header.setStyleSheet(f"""
-                QPushButton {{
-                    background: {SURFACE};
-                    border: none;
-                    border-radius: 6px;
-                    color: {TEXT};
-                    font-size: 11px;
-                    font-weight: 700;
-                    padding: 8px 12px;
-                    text-align: left;
-                }}
-                QPushButton:checked {{
-                    background: {ACCENT}18;
-                    color: {ACCENT};
-                    border-bottom-left-radius: 0;
-                    border-bottom-right-radius: 0;
-                    border-bottom: 1px solid {BORDER};
-                }}
-                QPushButton:hover {{ background: {BORDER}33; }}
-            """)
-            v_grupo.addWidget(header)
-
-            # Corpo com os botões de email
-            corpo_widget = QWidget()
-            corpo_widget.setStyleSheet("background: transparent;")
-            corpo_widget.setVisible(False)
-            corpo_lay = QHBoxLayout(corpo_widget)
-            corpo_lay.setContentsMargins(10, 8, 10, 8)
-            corpo_lay.setSpacing(6)
-            corpo_lay.setAlignment(Qt.AlignLeft)
-
-            for email in emails_fab:
-                b = _make_btn_email(email)
-                email_btns[email] = b
-                corpo_lay.addWidget(b)
-                b.clicked.connect(lambda checked, em=email: _toggle_email(em))
-            corpo_lay.addStretch()
-            v_grupo.addWidget(corpo_widget)
-
-            def _toggle_grupo(checked, h=header, c=corpo_widget):
-                c.setVisible(checked)
-                txt = h.text()
-                h.setText(txt.replace("▶", "▼") if checked else txt.replace("▼", "▶"))
-
-            header.clicked.connect(_toggle_grupo)
-            lay.addWidget(grupo)
-
-        # ── Campos ──────────────────────────────────────
-        lay.addWidget(QLabel("DESTINATÁRIO"))
         inp_d = QLineEdit(destinatario)
-        inp_d.setMinimumHeight(32)
+        inp_d.setMinimumHeight(34)
+        inp_d.setPlaceholderText("email1@exemplo.com; email2@exemplo.com")
         lay.addWidget(inp_d)
 
-        # Atualiza botões ao editar o campo manualmente
-        inp_d.textChanged.connect(lambda _: _atualizar_botoes())
-        _atualizar_botoes()
+        # Botões de seleção rápida — todos os emails cadastrados
+        if todos_emails:
+            lbl_opcoes = QLabel("SELECIONAR:")
+            lbl_opcoes.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent; margin-top: 4px;")
+            lay.addWidget(lbl_opcoes)
+
+            wrap = QWidget(); wrap.setStyleSheet("background: transparent;")
+            flow = QHBoxLayout(wrap)
+            flow.setContentsMargins(0, 0, 0, 4)
+            flow.setSpacing(6)
+            flow.setAlignment(Qt.AlignLeft)
+            flow.setSpacing(6)
+
+            email_btns = {}
+
+            def _atualizar_btns():
+                atual = set(e.strip() for e in inp_d.text().split(";") if e.strip())
+                for em, b in email_btns.items():
+                    b.blockSignals(True)
+                    b.setChecked(em in atual)
+                    b.blockSignals(False)
+
+            def _toggle(email):
+                atual = [e.strip() for e in inp_d.text().split(";") if e.strip()]
+                if email in atual:
+                    atual.remove(email)
+                else:
+                    atual.append(email)
+                inp_d.setText("; ".join(atual))
+
+            for em in todos_emails:
+                btn = QPushButton(em)
+                btn.setCheckable(True)
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: transparent; border: 1px solid {BORDER2};
+                        border-radius: 5px; color: {MUTED};
+                        font-size: 10px; padding: 4px 8px;
+                    }}
+                    QPushButton:checked {{
+                        background: {ACCENT}22; border-color: {ACCENT};
+                        color: {ACCENT}; font-weight: 700;
+                    }}
+                    QPushButton:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
+                """)
+                btn.clicked.connect(lambda checked, e=em: _toggle(e))
+                email_btns[em] = btn
+                flow.addWidget(btn)
+
+            flow.addStretch()
+            lay.addWidget(wrap)
+            inp_d.textChanged.connect(lambda _: _atualizar_btns())
+            _atualizar_btns()
 
         lay.addWidget(QLabel("ASSUNTO"))
         inp_a = QLineEdit(assunto); inp_a.setMinimumHeight(36)
@@ -3177,7 +3158,7 @@ class UI(QWidget):
         lbl_st = QLabel("STATUS:")
         lbl_st.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; background: transparent;")
         combo_st = QComboBox()
-        combo_st.addItems(["DESCARGA", "CARREGADO", "MARCADO", "CHEGA", "AGUARDANDO"])
+        combo_st.addItems(["AGUARDANDO", "DESCARGA", "CARREGADO", "MARCADO", "CHEGA"])
         combo_st.setStyleSheet(f"""
             QComboBox {{
                 background: {SURFACE}; border: 1px solid {BORDER2};
@@ -3333,7 +3314,7 @@ class UI(QWidget):
             self._adicionar_linha_pedido()
 
         campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
-                          "Destino", "Motorista", "Cavalo", "Solicitante",
+                          "Destino", "Motorista", "Cavalo", "Pagador",
                           "Agência", "UF", "Frete/Emp", "Frete/Mot",
                           "Rota", "Agenciamento", "Colocador"]
         for campo in campos_simples:

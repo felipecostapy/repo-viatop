@@ -244,7 +244,7 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         "Origem":        "J10",
         "Data Apresentação": "J11",
         "Destino":       "O10",
-        "Solicitante":   "O11",
+        "Pagador":       "O11",
         "Fábrica":       "D15",
         "Cliente":       "I15",
         "Fazenda":       "O15",
