@@ -1237,7 +1237,7 @@ class BaseWidget(QWidget):
 
         # Colunas visíveis: DATA(0), FILIAL(1), PAGADOR(2), MOTORISTA(4), PLACA(5),
         #                   DESTINO(7), UF(8), PESO(9), STATUS(14)
-        self._colunas_visiveis = [0, 1, 2, 4, 5, 7, 8, 9, 14, 17]
+        self._colunas_visiveis = [0, 1, 2, 4, 5, 7, 8, 9, 14, 18]
         COLUNAS = ["DATA", "FILIAL", "PAGADOR", "MOTORISTA", "PLACA",
                    "DESTINO", "UF", "PESO", "STATUS", "COLOCADOR", "", ""]
         self._tabela.setColumnCount(len(COLUNAS))
@@ -1333,8 +1333,8 @@ class BaseWidget(QWidget):
             self._tabela.insertRow(r)
             self._tabela.setRowHeight(r, 28)
 
-            if len(linha) > 18:
-                self._row_to_linha_planilha[r] = linha[18]
+            if len(linha) > 19:
+                self._row_to_linha_planilha[r] = linha[19]
 
             status = str(linha[14] if len(linha) > 14 else "").upper()
             if "CARREGADO" in status and "NÃO" not in status:
@@ -1459,9 +1459,9 @@ class BaseWidget(QWidget):
         # planilha: [0=DATA,1=FILIAL,2=PAGADOR,3=AGENCIA,4=MOTORISTA,
         #            5=PLACA,6=FABRICA,7=DESTINO,8=UF,9=PESO,
         #            10=FRETE/E,11=FRETE/M,12=ROTA,13=AGENCIAMENTO,
-        #            14=STATUS,15=PEDIDO,16=PRODUTO,17=COLOCADOR]
+        #            14=STATUS,15=PEDIDO,16=PRODUTO,17=EMBALAGEM,18=COLOCADOR]
         VISIVEL_PARA_PLANILHA = {0: 0, 1: 1, 2: 2, 3: 4, 4: 5,
-                                  5: 7, 6: 8, 7: 9, 8: 14, 9: 17}
+                                  5: 7, 6: 8, 7: 9, 8: 14, 9: 18}
 
         try:
             from planilha import atualizar_linha_base, carregar_base_com_linhas
@@ -2950,66 +2950,112 @@ class UI(QWidget):
         lay.setContentsMargins(20, 20, 20, 20)
         lay.setSpacing(8)
 
-        # ── Botões de email rápido ──────────────────────
-        if emails_rapidos:
-            lbl_rapido = QLabel("E-MAILS RÁPIDOS")
-            lbl_rapido.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
-            lay.addWidget(lbl_rapido)
+        # ── Grupos expansíveis por fábrica ──────────────
+        lbl_rapido = QLabel("E-MAILS RÁPIDOS")
+        lbl_rapido.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+        lay.addWidget(lbl_rapido)
 
-            btn_wrap = QWidget()
-            btn_wrap.setStyleSheet("background: transparent;")
-            btn_flow = QHBoxLayout(btn_wrap)
-            btn_flow.setContentsMargins(0, 0, 0, 4)
-            btn_flow.setSpacing(6)
-            btn_flow.setAlignment(Qt.AlignLeft)
+        email_btns = {}
 
-            email_btns = {}
+        def _make_btn_email(email):
+            btn = QPushButton(email)
+            btn.setCheckable(True)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent;
+                    border: 1px solid {BORDER2};
+                    border-radius: 5px;
+                    color: {MUTED};
+                    font-size: 10px;
+                    padding: 4px 8px;
+                }}
+                QPushButton:checked {{
+                    background: {ACCENT}22;
+                    border-color: {ACCENT};
+                    color: {ACCENT};
+                    font-weight: 700;
+                }}
+                QPushButton:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
+            """)
+            return btn
 
-            def _make_btn_email(email):
-                btn = QPushButton(email)
-                btn.setCheckable(True)
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: transparent;
-                        border: 1px solid {BORDER2};
-                        border-radius: 5px;
-                        color: {MUTED};
-                        font-size: 10px;
-                        padding: 4px 8px;
-                    }}
-                    QPushButton:checked {{
-                        background: {ACCENT}22;
-                        border-color: {ACCENT};
-                        color: {ACCENT};
-                        font-weight: 700;
-                    }}
-                    QPushButton:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
-                """)
-                return btn
+        def _atualizar_botoes():
+            atual = set(e.strip() for e in inp_d.text().split(";") if e.strip())
+            for em, b in email_btns.items():
+                b.blockSignals(True)
+                b.setChecked(em in atual)
+                b.blockSignals(False)
 
-            def _atualizar_botoes():
-                atual = set(e.strip() for e in inp_d.text().split(";") if e.strip())
-                for em, b in email_btns.items():
-                    b.blockSignals(True)
-                    b.setChecked(em in atual)
-                    b.blockSignals(False)
+        def _toggle_email(email):
+            atual = [e.strip() for e in inp_d.text().split(";") if e.strip()]
+            if email in atual:
+                atual.remove(email)
+            else:
+                atual.append(email)
+            inp_d.setText(";".join(atual))
 
-            def _toggle_email(email):
-                atual = [e.strip() for e in inp_d.text().split(";") if e.strip()]
-                if email in atual:
-                    atual.remove(email)
-                else:
-                    atual.append(email)
-                inp_d.setText(";".join(atual))
+        # Monta um grupo expansível por fábrica
+        for fabrica, valor in REGRAS_EMAIL.items():
+            emails_fab = [e.strip() for e in valor.split(";") if e.strip() and "@" in e]
+            if not emails_fab:
+                continue
 
-            for email in emails_rapidos:
+            # Container do grupo
+            grupo = QWidget()
+            grupo.setStyleSheet(f"background: {BG}; border: 1px solid {BORDER}; border-radius: 6px;")
+            v_grupo = QVBoxLayout(grupo)
+            v_grupo.setContentsMargins(0, 0, 0, 0)
+            v_grupo.setSpacing(0)
+
+            # Header clicável
+            header = QPushButton(f"▶  {fabrica}  ({len(emails_fab)} email{'s' if len(emails_fab) > 1 else ''})")
+            header.setCheckable(True)
+            header.setStyleSheet(f"""
+                QPushButton {{
+                    background: {SURFACE};
+                    border: none;
+                    border-radius: 6px;
+                    color: {TEXT};
+                    font-size: 11px;
+                    font-weight: 700;
+                    padding: 8px 12px;
+                    text-align: left;
+                }}
+                QPushButton:checked {{
+                    background: {ACCENT}18;
+                    color: {ACCENT};
+                    border-bottom-left-radius: 0;
+                    border-bottom-right-radius: 0;
+                    border-bottom: 1px solid {BORDER};
+                }}
+                QPushButton:hover {{ background: {BORDER}33; }}
+            """)
+            v_grupo.addWidget(header)
+
+            # Corpo com os botões de email
+            corpo_widget = QWidget()
+            corpo_widget.setStyleSheet("background: transparent;")
+            corpo_widget.setVisible(False)
+            corpo_lay = QHBoxLayout(corpo_widget)
+            corpo_lay.setContentsMargins(10, 8, 10, 8)
+            corpo_lay.setSpacing(6)
+            corpo_lay.setAlignment(Qt.AlignLeft)
+
+            for email in emails_fab:
                 b = _make_btn_email(email)
                 email_btns[email] = b
-                btn_flow.addWidget(b)
+                corpo_lay.addWidget(b)
                 b.clicked.connect(lambda checked, em=email: _toggle_email(em))
+            corpo_lay.addStretch()
+            v_grupo.addWidget(corpo_widget)
 
-            btn_flow.addStretch()
-            lay.addWidget(btn_wrap)
+            def _toggle_grupo(checked, h=header, c=corpo_widget):
+                c.setVisible(checked)
+                txt = h.text()
+                h.setText(txt.replace("▶", "▼") if checked else txt.replace("▼", "▶"))
+
+            header.clicked.connect(_toggle_grupo)
+            lay.addWidget(grupo)
 
         # ── Campos ──────────────────────────────────────
         lay.addWidget(QLabel("DESTINATÁRIO"))
