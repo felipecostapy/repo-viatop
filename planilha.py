@@ -314,22 +314,25 @@ def listar_abas_base(conta):
     return abas
 
 
-def migrar_base_para_dados(conta, callback_progresso=None):
+def migrar_base_para_dados(conta, abas_filtro=None, callback_progresso=None):
     """
-    Lê todas as abas BASE MM/AAAA da planilha BASE e migra os carregamentos
-    que possuem PEDIDO preenchido para as abas PEDIDOS e DADOS da planilha DADOS_ID.
+    Migra carregamentos das abas BASE MM/AAAA para as abas PEDIDOS e DADOS.
+    abas_filtro: lista de nomes de abas a migrar. Se None, migra todas.
 
     Para cada combinação única PEDIDO+PRODUTO+CLIENTE:
       - Cria uma linha na aba PEDIDOS com SALDO_TOTAL = 0 (ajustar manualmente depois)
       - Grava cada carregamento na aba DADOS
 
-    Retorna dict com resumo: {pedidos_criados, carregamentos_migrados, erros}
+    Retorna dict com resumo: {pedidos_criados, carregamentos_migrados, abas_lidas, total_lido}
     """
     service = _autenticar(conta)
 
-    # ── 1. Lista todas as abas BASE ───────────────────────────────
-    abas = listar_abas_base(conta)
-    abas_base = [a for a in abas if re.match(r"BASE\s+\d{2}/?\d{4}", a, re.IGNORECASE)]
+    # ── 1. Define quais abas migrar ───────────────────────────────
+    if abas_filtro:
+        abas_base = abas_filtro
+    else:
+        abas = listar_abas_base(conta)
+        abas_base = [a for a in abas if re.match(r"BASE\s+\d{2}/?\d{4}", a, re.IGNORECASE)]
 
     if not abas_base:
         raise Exception("Nenhuma aba BASE MM/AAAA encontrada na planilha.")
@@ -338,22 +341,36 @@ def migrar_base_para_dados(conta, callback_progresso=None):
     # BASE colunas: DATA(0) FILIAL(1) PAGADOR(2) AGENCIA(3) MOTORISTA(4)
     #               PLACA(5) FABRICA(6) DESTINO(7) UF(8) PESO(9)
     #               FRETE/E(10) FRETE/M(11) ROTA(12) AGENCIAMENTO(13)
-    #               STATUS(14) PEDIDO(15) PRODUTO(16)
+    #               STATUS(14) PEDIDO(15) PRODUTO(16) COLOCADOR(17)
 
     todos = []  # lista de dicts com cada carregamento
 
     for aba in abas_base:
         if callback_progresso:
             callback_progresso(f"Lendo {aba}...")
-        linhas = carregar_base(conta, aba=aba)
-        for row in linhas:
+
+        resp_aba = service.spreadsheets().values().get(
+            spreadsheetId=BASE_ID,
+            range=f"'{aba}'",
+            valueRenderOption="FORMATTED_VALUE",
+        ).execute()
+        rows = resp_aba.get("values", [])
+
+        for row in rows[1:]:  # pula cabeçalho
+            while len(row) < 17:
+                row.append("")
+            # Ignora linhas de cabeçalho repetido ou sem data
+            if str(row[0]).strip().upper() == "DATA":
+                continue
             pedido  = str(row[15] or "").strip()
             produto = str(row[16] or "").strip()
-            if not pedido:
+            data    = _formatar_data(str(row[0] or "").strip())
+            pagador = str(row[2] or "").strip()
+            if not pedido or not data or not pagador:
                 continue
             todos.append({
-                "data":    _converter_data_para_sheets(str(row[0] or "").strip()),
-                "cliente": str(row[2] or "").strip(),
+                "data":    data,
+                "cliente": pagador,
                 "destino": str(row[7] or "").strip(),
                 "placa":   str(row[5] or "").strip(),
                 "pedido":  pedido,
@@ -505,20 +522,20 @@ def carregar_base(conta, aba=None):
         return []
 
     dados = []
-    header_found = False
+    # Primeira linha é sempre o cabeçalho — começa da linha 2
+    # Pula linhas que sejam cabeçalho repetido (ex: "DATA" na col 0)
     for i, linha in enumerate(valores[1:], 2):
-        while len(linha) < 17:
+        while len(linha) < 18:
             linha.append("")
-        if not header_found:
-            if str(linha[0]).strip().upper() == "DATA":
-                header_found = True
+        # Ignora linhas de cabeçalho repetido
+        if str(linha[0]).strip().upper() == "DATA":
             continue
         data    = _formatar_data(str(linha[0]).strip())
         pagador = str(linha[2]).strip()
         if not data or not pagador:
             continue
         row    = list(linha[:17]) + [i]
-        row[0] = data   # substitui data já formatada
+        row[0] = data
         dados.append(row)
 
     return dados
@@ -539,7 +556,7 @@ def carregar_base_com_linhas(conta, aba=None):
     valores = resp.get("values", [])
     resultado = []
     for i, linha in enumerate(valores[1:], 2):
-        while len(linha) < 17:
+        while len(linha) < 18:
             linha.append("")
         resultado.append((i, linha[:17]))
     return resultado
@@ -925,12 +942,17 @@ def gravar_ordem_dupla(conta, dados_ordem, filial, status="CONFERIDO", aba=None)
     frete_mot    = str(dados_ordem.get("Frete/Mot", "")).upper()
     rota         = str(dados_ordem.get("Rota", "")).upper()
     agenciamento = str(dados_ordem.get("Agenciamento", "")).upper()
+    colocador    = str(dados_ordem.get("Colocador", "")).upper()
     filial_upper = filial.upper() if filial else ""
 
+    # BASE colunas: DATA(0) FILIAL(1) PAGADOR(2) AGENCIA(3) MOTORISTA(4)
+    #               PLACA(5) FABRICA(6) DESTINO(7) UF(8) PESO(9)
+    #               FRETE/E(10) FRETE/M(11) ROTA(12) AGENCIAMENTO(13)
+    #               STATUS(14) PEDIDO(15) PRODUTO(16) COLOCADOR(17) COLOCADOR(17)
     linha_fretes = [
         data, filial_upper, pagador, agencia, motorista,
         placa, fabrica, destino, uf, peso,
-        frete_emp, frete_mot, rota, agenciamento, status, pedido, produto
+        frete_emp, frete_mot, rota, agenciamento, status, pedido, produto, colocador
     ]
 
     _inserir_linha_base(service, None, None, linha_fretes, aba=aba)

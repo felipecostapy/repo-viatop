@@ -711,33 +711,96 @@ class PlanilhaWidget(QWidget):
             self._lbl_status.setText("Configure uma conta Gmail primeiro.")
             return
 
-        resp = QMessageBox.question(
-            self, "Migrar da BASE",
-            "Isso irá importar todos os carregamentos com PEDIDO preenchido "
-            "das abas BASE MM/AAAA para as abas PEDIDOS e DADOS.\n\n"
-            "Registros já existentes não serão duplicados.\n\n"
-            "Deseja continuar?",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if resp != QMessageBox.Yes:
+        # ── 1. Busca abas disponíveis ──────────────────────────────
+        self._lbl_status.setText("Buscando abas disponíveis...")
+        QApplication.processEvents()
+        try:
+            from planilha import listar_abas_base, migrar_base_para_dados
+            import re as _re
+            todas = listar_abas_base(conta)
+            abas_base = [a for a in todas if _re.match(r"BASE\s+\d{2}/?\d{4}", a, _re.IGNORECASE)]
+            if not abas_base:
+                QMessageBox.warning(self, "Aviso", "Nenhuma aba BASE MM/AAAA encontrada na planilha.")
+                return
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", str(e))
             return
 
+        # ── 2. Diálogo de seleção de abas ─────────────────────────
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Selecionar abas para migrar")
+        dlg.setFixedWidth(340)
+        dlg.setStyleSheet(DIALOG_SS)
+
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 20, 20, 20)
+        lay.setSpacing(10)
+
+        lbl = QLabel("Selecione as abas que deseja migrar:")
+        lbl.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        lay.addWidget(lbl)
+
+        # Checkboxes — marca a mais recente por padrão
+        checks = []
+        for i, aba in enumerate(abas_base):
+            chk = QCheckBox(aba)
+            chk.setStyleSheet(f"color: {TEXT}; font-size: 12px; background: transparent;")
+            chk.setChecked(i == len(abas_base) - 1)  # marca a última (mais recente)
+            lay.addWidget(chk)
+            checks.append((chk, aba))
+
+        # Botões selecionar tudo / nenhum
+        sel_row = QHBoxLayout()
+        btn_todos   = QPushButton("Selecionar todas")
+        btn_nenhum  = QPushButton("Desmarcar todas")
+        for b in [btn_todos, btn_nenhum]:
+            b.setStyleSheet(f"QPushButton {{ background: transparent; border: 1px solid {BORDER2}; color: {MUTED}; border-radius: 4px; padding: 4px 8px; font-size: 10px; }} QPushButton:hover {{ color: {TEXT}; }}")
+        btn_todos.clicked.connect(lambda: [c.setChecked(True)  for c, _ in checks])
+        btn_nenhum.clicked.connect(lambda: [c.setChecked(False) for c, _ in checks])
+        sel_row.addWidget(btn_todos)
+        sel_row.addWidget(btn_nenhum)
+        lay.addLayout(sel_row)
+
+        btns = QHBoxLayout()
+        bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
+        bo = QPushButton("MIGRAR");   bo.setObjectName("btn_ok")
+        btns.addWidget(bc); btns.addWidget(bo)
+        lay.addLayout(btns)
+
+        abas_selecionadas = []
+
+        def confirmar():
+            selecionadas = [aba for chk, aba in checks if chk.isChecked()]
+            if not selecionadas:
+                QMessageBox.warning(dlg, "Atenção", "Selecione pelo menos uma aba.")
+                return
+            abas_selecionadas.extend(selecionadas)
+            dlg.accept()
+
+        bc.clicked.connect(dlg.reject)
+        bo.clicked.connect(confirmar)
+        if dlg.exec() != QDialog.Accepted or not abas_selecionadas:
+            return
+
+        # ── 3. Executa migração ────────────────────────────────────
         self._lbl_status.setText("Migrando... aguarde.")
         QApplication.processEvents()
 
         try:
-            from planilha import migrar_base_para_dados
-
             def progresso(msg):
                 self._lbl_status.setText(msg)
                 QApplication.processEvents()
 
-            resultado = migrar_base_para_dados(conta, callback_progresso=progresso)
+            resultado = migrar_base_para_dados(
+                conta,
+                abas_filtro=abas_selecionadas,
+                callback_progresso=progresso
+            )
 
-            abas = ", ".join(resultado["abas_lidas"])
+            abas_str = ", ".join(resultado["abas_lidas"])
             msg = (
                 f"Migração concluída!\n\n"
-                f"Abas lidas: {abas}\n"
+                f"Abas lidas: {abas_str}\n"
                 f"Total lido: {resultado['total_lido']} carregamento(s)\n"
                 f"Pedidos criados: {resultado['pedidos_criados']}\n"
                 f"Carregamentos migrados: {resultado['carregamentos_migrados']}\n\n"
@@ -1174,13 +1237,13 @@ class BaseWidget(QWidget):
 
         # Colunas visíveis: DATA(0), FILIAL(1), PAGADOR(2), MOTORISTA(4), PLACA(5),
         #                   DESTINO(7), UF(8), PESO(9), STATUS(14)
-        self._colunas_visiveis = [0, 1, 2, 4, 5, 7, 8, 9, 14]
+        self._colunas_visiveis = [0, 1, 2, 4, 5, 7, 8, 9, 14, 17]
         COLUNAS = ["DATA", "FILIAL", "PAGADOR", "MOTORISTA", "PLACA",
-                   "DESTINO", "UF", "PESO", "STATUS", "", ""]
+                   "DESTINO", "UF", "PESO", "STATUS", "COLOCADOR", "", ""]
         self._tabela.setColumnCount(len(COLUNAS))
         self._tabela.setHorizontalHeaderLabels(COLUNAS)
 
-        larguras = [90, 70, 130, 120, 90, 120, 40, 60, 110, 50, 50]
+        larguras = [90, 70, 130, 120, 90, 120, 40, 60, 110, 90, 50, 50]
         for i, w in enumerate(larguras):
             self._tabela.setColumnWidth(i, w)
         self._tabela.horizontalHeader().setStretchLastSection(False)
@@ -1270,8 +1333,8 @@ class BaseWidget(QWidget):
             self._tabela.insertRow(r)
             self._tabela.setRowHeight(r, 28)
 
-            if len(linha) > 17:
-                self._row_to_linha_planilha[r] = linha[17]
+            if len(linha) > 18:
+                self._row_to_linha_planilha[r] = linha[18]
 
             status = str(linha[14] if len(linha) > 14 else "").upper()
             if "CARREGADO" in status and "NÃO" not in status:
@@ -1293,8 +1356,8 @@ class BaseWidget(QWidget):
                     item.setBackground(bg)
                 self._tabela.setItem(r, col_tabela, item)
 
-            self._tabela.setItem(r, 9,  self._make_btn_item("EDIT", "#e3b341"))
-            self._tabela.setItem(r, 10, self._make_btn_item("DEL",  "#da3633"))
+            self._tabela.setItem(r, 10, self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(r, 11, self._make_btn_item("DEL",  "#da3633"))
 
         self._tabela.setSortingEnabled(True)
         try:
@@ -1316,10 +1379,10 @@ class BaseWidget(QWidget):
     def _on_item_click(self, item):
         col = item.column()
         row = item.row()
-        if col == 9:
-            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(9)]
+        if col == 10:
+            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(10)]
             self._toggle_edicao(row, dados)
-        elif col == 10:
+        elif col == 11:
             dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(9)]
             self._deletar_linha(row, dados)
 
@@ -1384,21 +1447,21 @@ class BaseWidget(QWidget):
     def _salvar_edicao(self, row, dados_orig):
         conta = self._combo_conta.currentText()
         novos_visiveis = []
-        for c in range(8):
+        for c in range(9):
             w = self._tabela.cellWidget(row, c)
             novos_visiveis.append(w.text() if isinstance(w, QLineEdit) else (self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""))
         combo = self._tabela.cellWidget(row, 8)
-        novos_visiveis.append(combo.currentText() if isinstance(combo, QComboBox) else "")
+        novos_visiveis[-1] = combo.currentText() if isinstance(combo, QComboBox) else novos_visiveis[-1]
 
         # Mapeamento: índice visível → índice real na planilha
         # visível: [0=DATA, 1=FILIAL, 2=PAGADOR, 3=MOTORISTA, 4=PLACA,
-        #           5=DESTINO, 6=UF, 7=PESO, 8=STATUS]
+        #           5=DESTINO, 6=UF, 7=PESO, 8=STATUS, 9=COLOCADOR]
         # planilha: [0=DATA,1=FILIAL,2=PAGADOR,3=AGENCIA,4=MOTORISTA,
         #            5=PLACA,6=FABRICA,7=DESTINO,8=UF,9=PESO,
         #            10=FRETE/E,11=FRETE/M,12=ROTA,13=AGENCIAMENTO,
-        #            14=STATUS,15=PEDIDO,16=PRODUTO]
+        #            14=STATUS,15=PEDIDO,16=PRODUTO,17=COLOCADOR]
         VISIVEL_PARA_PLANILHA = {0: 0, 1: 1, 2: 2, 3: 4, 4: 5,
-                                  5: 7, 6: 8, 7: 9, 8: 14}
+                                  5: 7, 6: 8, 7: 9, 8: 14, 9: 17}
 
         try:
             from planilha import atualizar_linha_base, carregar_base_com_linhas
@@ -1752,6 +1815,206 @@ class LoadingOverlay(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor(13, 17, 23, 220))
 
+class ConfigWidget(QWidget):
+    """Aba de configurações — gerenciador de contas Gmail e mapeamento empresa→conta."""
+
+    def __init__(self):
+        super().__init__()
+        self.setStyleSheet("background: transparent;")
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 20)
+        root.setSpacing(16)
+
+        titulo = QLabel("CONFIGURAÇÕES")
+        titulo.setStyleSheet(f"color: {TEXT}; font-size: 16px; font-weight: 700; letter-spacing: 1px; background: transparent;")
+        root.addWidget(titulo)
+
+        # ── Card: Contas Gmail ───────────────────────────────────
+        card_contas, body_contas = make_card("Contas Gmail")
+        v_contas = QVBoxLayout(body_contas)
+        v_contas.setSpacing(8)
+        v_contas.setContentsMargins(0, 0, 0, 0)
+
+        self._list_contas = QListWidget()
+        self._list_contas.setMinimumHeight(140)
+        self._list_contas.setStyleSheet(f"""
+            QListWidget {{
+                background: {BG}; border: 1px solid {BORDER};
+                border-radius: 6px; color: {TEXT};
+                font-size: 12px; padding: 4px;
+            }}
+            QListWidget::item {{ padding: 6px 8px; border-radius: 4px; }}
+            QListWidget::item:selected {{ background: {ACCENT}22; color: {ACCENT}; }}
+            QListWidget::item:hover {{ background: {BORDER}44; }}
+        """)
+        v_contas.addWidget(self._list_contas)
+
+        btn_row = QHBoxLayout()
+        btn_add = QPushButton("+ Adicionar conta Gmail")
+        btn_add.setStyleSheet(f"""
+            QPushButton {{
+                background: {ACCENT}; color: white; border: none;
+                border-radius: 6px; padding: 7px 14px; font-weight: 700; font-size: 11px;
+            }}
+            QPushButton:hover {{ background: {ACCENT_H}; }}
+        """)
+        btn_rem = QPushButton("🗑  Remover selecionada")
+        btn_rem.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; color: {DANGER};
+                border: 1px solid {DANGER}; border-radius: 6px;
+                padding: 7px 14px; font-weight: 700; font-size: 11px;
+            }}
+            QPushButton:hover {{ background: {DANGER}18; }}
+        """)
+        btn_row.addWidget(btn_add)
+        btn_row.addWidget(btn_rem)
+        btn_row.addStretch()
+        v_contas.addLayout(btn_row)
+
+        self._lbl_contas = QLabel("")
+        self._lbl_contas.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        v_contas.addWidget(self._lbl_contas)
+        root.addWidget(card_contas)
+
+        # ── Card: Conta padrão por empresa ───────────────────────
+        card_emp, body_emp = make_card("Conta padrão por empresa")
+        v_emp = QVBoxLayout(body_emp)
+        v_emp.setSpacing(10)
+        v_emp.setContentsMargins(0, 0, 0, 0)
+
+        descr = QLabel("Define qual conta Gmail é usada automaticamente ao gerar ordem para cada empresa.")
+        descr.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        descr.setWordWrap(True)
+        v_emp.addWidget(descr)
+
+        self._combos_empresa = {}
+        for empresa in ["Agrovia", "TopBrasil"]:
+            row = QHBoxLayout()
+            lbl = QLabel(empresa)
+            lbl.setFixedWidth(100)
+            lbl.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 600; background: transparent;")
+            combo = QComboBox()
+            combo.setMinimumHeight(32)
+            combo.setStyleSheet(f"""
+                QComboBox {{
+                    background: {BG}; border: 1px solid {BORDER};
+                    border-radius: 6px; color: {TEXT}; padding: 4px 8px; font-size: 11px;
+                }}
+                QComboBox:focus {{ border-color: {ACCENT}; }}
+                QComboBox QAbstractItemView {{
+                    background: {SURFACE}; color: {TEXT};
+                    border: 1px solid {BORDER}; selection-background-color: {ACCENT}22;
+                }}
+            """)
+            self._combos_empresa[empresa] = combo
+            btn_limpar = QPushButton("✕")
+            btn_limpar.setFixedSize(28, 28)
+            btn_limpar.setToolTip(f"Remover vínculo de {empresa}")
+            btn_limpar.setStyleSheet(f"""
+                QPushButton {{ background: transparent; border: none; color: {MUTED}; font-size: 12px; }}
+                QPushButton:hover {{ color: {DANGER}; }}
+            """)
+            btn_limpar.clicked.connect(lambda _, e=empresa: self._limpar_empresa(e))
+            row.addWidget(lbl)
+            row.addWidget(combo, 1)
+            row.addWidget(btn_limpar)
+            v_emp.addLayout(row)
+
+        btn_salvar_emp = QPushButton("SALVAR VÍNCULOS")
+        btn_salvar_emp.setStyleSheet(f"""
+            QPushButton {{
+                background: {ACCENT}; color: white; border: none;
+                border-radius: 6px; padding: 7px 18px; font-weight: 700; font-size: 11px;
+            }}
+            QPushButton:hover {{ background: {ACCENT_H}; }}
+        """)
+        btn_salvar_emp.clicked.connect(self._salvar_vinculos)
+        v_emp.addWidget(btn_salvar_emp, alignment=Qt.AlignLeft)
+
+        self._lbl_emp = QLabel("")
+        self._lbl_emp.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        v_emp.addWidget(self._lbl_emp)
+        root.addWidget(card_emp)
+        root.addStretch()
+
+        btn_add.clicked.connect(self._adicionar_conta)
+        btn_rem.clicked.connect(self._remover_conta)
+
+    def _carregar(self):
+        contas = _listar_contas_gmail()
+        self._list_contas.clear()
+        for c in contas:
+            item = QListWidgetItem(c)
+            self._list_contas.addItem(item)
+        self._lbl_contas.setText(f"{len(contas)} conta(s) configurada(s)")
+
+        mapa = carregar_contas_empresa()
+        for empresa, combo in self._combos_empresa.items():
+            combo.clear()
+            combo.addItem("(nenhuma — perguntar sempre)")
+            combo.addItems(contas)
+            conta_atual = mapa.get(empresa, "")
+            if conta_atual:
+                idx = combo.findText(conta_atual)
+                if idx >= 0:
+                    combo.setCurrentIndex(idx)
+
+    def _adicionar_conta(self):
+        try:
+            novo = adicionar_conta_gmail()
+            self._lbl_contas.setText(f"✓  Conta {novo} adicionada com sucesso.")
+            self._carregar()
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", str(e))
+
+    def _remover_conta(self):
+        item = self._list_contas.currentItem()
+        if not item:
+            QMessageBox.warning(self, "Atenção", "Selecione uma conta para remover.")
+            return
+        conta = item.text()
+        resp = QMessageBox.question(
+            self, "Remover conta",
+            f"Remover a conta {conta}?\n\nO arquivo de token será excluído.",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if resp != QMessageBox.Yes:
+            return
+        try:
+            import os
+            token = os.path.join("gmail_tokens", f"token_{conta}.json")
+            if os.path.exists(token):
+                os.remove(token)
+            mapa = carregar_contas_empresa()
+            for emp in list(mapa.keys()):
+                if mapa[emp] == conta:
+                    del mapa[emp]
+            salvar_contas_empresa(mapa)
+            self._lbl_contas.setText(f"Conta {conta} removida.")
+            self._carregar()
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", str(e))
+
+    def _salvar_vinculos(self):
+        mapa = carregar_contas_empresa()
+        for empresa, combo in self._combos_empresa.items():
+            val = combo.currentText()
+            if val.startswith("(nenhuma"):
+                mapa.pop(empresa, None)
+            else:
+                mapa[empresa] = val
+        salvar_contas_empresa(mapa)
+        self._lbl_emp.setText("✓  Vínculos salvos com sucesso.")
+
+    def _limpar_empresa(self, empresa):
+        self._combos_empresa[empresa].setCurrentIndex(0)
+        mapa = carregar_contas_empresa()
+        mapa.pop(empresa, None)
+        salvar_contas_empresa(mapa)
+        self._lbl_emp.setText(f"Vínculo de {empresa} removido.")
+
+
 class UI(QWidget):
     def __init__(self):
         super().__init__()
@@ -1929,6 +2192,7 @@ class UI(QWidget):
         self._nav_btns.append(make_nav_btn("🕐", "Histórico", 1))
         self._nav_btns.append(make_nav_btn("📦", "Controle de Pedidos", 2))
         self._nav_btns.append(make_nav_btn("📊", "Controle de Ordens", 3))
+        self._nav_btns.append(make_nav_btn("⚙", "Configurações", 4))
         self._nav_btns[0].setChecked(True)
 
         for b in self._nav_btns:
@@ -1948,6 +2212,8 @@ class UI(QWidget):
         self._stack.addWidget(self._planilha_widget)
         self._base_widget = BaseWidget()
         self._stack.addWidget(self._base_widget)
+        self._config_widget = ConfigWidget()
+        self._stack.addWidget(self._config_widget)
 
         root.addWidget(self._stack, 1)
 
@@ -1959,6 +2225,8 @@ class UI(QWidget):
             self._historico_widget.recarregar()
         if idx == 2:
             self._planilha_widget._atualizar_contas()
+        if idx == 4:
+            self._config_widget._carregar()
         if idx == 3:
             self._base_widget._atualizar_contas()
 
@@ -2168,8 +2436,10 @@ class UI(QWidget):
         r2 = QHBoxLayout(); r2.setSpacing(6)
         self.entradas["Rota"]         = make_input()
         self.entradas["Agenciamento"] = make_input()
-        r2.addWidget(make_field("Rota",         self.entradas["Rota"]),         1)
-        r2.addWidget(make_field("Agenciamento", self.entradas["Agenciamento"]), 1)
+        self.entradas["Colocador"]    = make_input()
+        r2.addWidget(make_field("Rota",         self.entradas["Rota"]),         2)
+        r2.addWidget(make_field("Agenciamento", self.entradas["Agenciamento"]), 2)
+        r2.addWidget(make_field("Colocador",    self.entradas["Colocador"]),    2)
         v.addLayout(r2)
 
         v.addStretch()
@@ -3026,7 +3296,7 @@ class UI(QWidget):
         campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
                           "Destino", "Motorista", "Cavalo", "Solicitante",
                           "Agência", "UF", "Frete/Emp", "Frete/Mot",
-                          "Rota", "Agenciamento"]
+                          "Rota", "Agenciamento", "Colocador"]
         for campo in campos_simples:
             valor = dados.get(campo, "")
             if not valor:
