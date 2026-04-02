@@ -1694,6 +1694,10 @@ def parsear_mensagem_whatsapp(texto):
     agenciamento = extrair("AGENCIAMENTO")
     resultado["Agenciamento"] = agenciamento  # vazio se não preenchido na tag
 
+    colocador = extrair("COLOCADOR")
+    if colocador:
+        resultado["Colocador"] = colocador
+
     pagamento = extrair("PAGAMENTO")
     if pagamento:
         resultado["Pagamento"] = pagamento
