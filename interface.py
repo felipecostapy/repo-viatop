@@ -1614,8 +1614,13 @@ def parsear_mensagem_whatsapp(texto):
     resultado = {}
 
     def extrair(chave):
-        match = re.search(rf"^{chave}\s*:\s*(.+)", texto, re.IGNORECASE | re.MULTILINE)
-        return match.group(1).strip() if match else ""
+        match = re.search(rf"^{chave}\s*:\s*([^\n\r]*)", texto, re.IGNORECASE | re.MULTILINE)
+        val = match.group(1).strip() if match else ""
+        # Se o valor capturado começa com outra chave de campo (ex: "PAGAMENTO: 90/10"),
+        # significa que o campo estava vazio — descarta
+        if val and re.match(r"^[A-ZÀ-ÿ/]+\s*:", val, re.IGNORECASE):
+            val = ""
+        return val
 
     filial = extrair("FILIAL").upper()
     resultado["empresa"] = "Agrovia" if "AGRO" in filial else "TopBrasil"
@@ -1685,9 +1690,13 @@ def parsear_mensagem_whatsapp(texto):
     if rota:
         resultado["Rota"] = rota
 
+    # Agenciamento: sempre define no resultado (pode ser vazio) para limpar campo
     agenciamento = extrair("AGENCIAMENTO")
-    if agenciamento:
-        resultado["Agenciamento"] = agenciamento
+    resultado["Agenciamento"] = agenciamento  # vazio se não preenchido na tag
+
+    pagamento = extrair("PAGAMENTO")
+    if pagamento:
+        resultado["Pagamento"] = pagamento
 
     uf_campo = extrair("UF").upper()
     if uf_campo:
@@ -2465,6 +2474,12 @@ class UI(QWidget):
         r2.addWidget(make_field("Agenciamento", self.entradas["Agenciamento"]), 2)
         r2.addWidget(make_field("Colocador",    self.entradas["Colocador"]),    2)
         v.addLayout(r2)
+
+        r3 = QHBoxLayout(); r3.setSpacing(6)
+        self.entradas["Pagamento"] = make_input()
+        r3.addWidget(make_field("Pagamento", self.entradas["Pagamento"]), 1)
+        r3.addStretch(2)
+        v.addLayout(r3)
 
         v.addStretch()
         return frame
@@ -3316,7 +3331,7 @@ class UI(QWidget):
         campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
                           "Destino", "Motorista", "Cavalo", "Pagador",
                           "Agência", "UF", "Frete/Emp", "Frete/Mot",
-                          "Rota", "Agenciamento", "Colocador"]
+                          "Rota", "Agenciamento", "Colocador", "Pagamento"]
         for campo in campos_simples:
             valor = dados.get(campo, "")
             if not valor:

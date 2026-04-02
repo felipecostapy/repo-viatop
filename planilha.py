@@ -525,7 +525,7 @@ def carregar_base(conta, aba=None):
     # Primeira linha é sempre o cabeçalho — começa da linha 2
     # Pula linhas que sejam cabeçalho repetido (ex: "DATA" na col 0)
     for i, linha in enumerate(valores[1:], 2):
-        while len(linha) < 19:
+        while len(linha) < 20:
             linha.append("")
         # Ignora linhas de cabeçalho repetido
         if str(linha[0]).strip().upper() == "DATA":
@@ -556,7 +556,7 @@ def carregar_base_com_linhas(conta, aba=None):
     valores = resp.get("values", [])
     resultado = []
     for i, linha in enumerate(valores[1:], 2):
-        while len(linha) < 19:
+        while len(linha) < 20:
             linha.append("")
         resultado.append((i, linha[:17]))
     return resultado
@@ -945,16 +945,17 @@ def gravar_ordem_dupla(conta, dados_ordem, filial, status="CONFERIDO", aba=None)
     agenciamento = str(dados_ordem.get("Agenciamento", "")).upper()
     embalagem    = str(dados_ordem.get("Embalagem", "")).upper()
     colocador    = str(dados_ordem.get("Colocador", "")).upper()
+    pagamento    = str(dados_ordem.get("Pagamento", "")).upper()
     filial_upper = filial.upper() if filial else ""
 
     # BASE colunas: DATA(0) FILIAL(1) PAGADOR(2) AGENCIA(3) MOTORISTA(4)
     #               PLACA(5) FABRICA(6) DESTINO(7) UF(8) PESO(9)
     #               FRETE/E(10) FRETE/M(11) ROTA(12) AGENCIAMENTO(13)
-    #               STATUS(14) PEDIDO(15) PRODUTO(16) EMBALAGEM(17) COLOCADOR(18)
+    #               STATUS(14) PEDIDO(15) PRODUTO(16) EMBALAGEM(17) COLOCADOR(18) PAGAMENTO(19)
     linha_fretes = [
         data, filial_upper, pagador, agencia, motorista,
         placa, fabrica, destino, uf, peso,
-        frete_emp, frete_mot, rota, agenciamento, status, pedido, produto, embalagem, colocador
+        frete_emp, frete_mot, rota, agenciamento, status, pedido, produto, embalagem, colocador, pagamento
     ]
 
     _inserir_linha_base(service, None, None, linha_fretes, aba=aba)
