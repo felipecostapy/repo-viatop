@@ -946,7 +946,6 @@ class PlanilhaWidget(QWidget):
             font-weight: 700;
             padding: 2px 8px;
         """)
-        lbl_saldo.setVisible(False)
 
         btn_saldo = QPushButton("+/-")
         btn_saldo.setFixedHeight(22)
@@ -1032,16 +1031,13 @@ class PlanilhaWidget(QWidget):
                 border-radius: 2px;
             }}
         """)
-        bar.setVisible(False)
         h_lay.addWidget(bar)
 
         rodape = QHBoxLayout()
         lbl_t = QLabel(f"Total: {total:.0f} t")
         lbl_t.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
-        lbl_t.setVisible(False)
         lbl_c = QLabel(f"Carregado: {carregado:.0f} t")
         lbl_c.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
-        lbl_c.setVisible(False)
         rodape.addWidget(lbl_t)
         rodape.addStretch()
         rodape.addWidget(lbl_c)
@@ -1629,38 +1625,37 @@ def parsear_mensagem_whatsapp(texto):
     filial = extrair("FILIAL").upper()
     resultado["empresa"] = "Agrovia" if "AGRO" in filial else "TopBrasil"
 
-    # ── PAGADOR e CLIENTE ────────────────────────────────────────────
+    # ── PAGADOR / SOLICITANTE / CLIENTE ──────────────────────────────
     # Regras:
-    # - PAGADOR → Solicitante (quem paga o frete)
-    # - CLIENTE → Cliente (destinatário da mercadoria)
-    # - Se a tag tiver PAGADOR e CLIENTE na mesma linha (ex: "PAGADOR/CLIENTE: NOME"),
-    #   ambos recebem o mesmo valor
-    # - Se só PAGADOR existir (sem CLIENTE), PAGADOR vai para Solicitante apenas
-    # - Se só CLIENTE existir (sem PAGADOR), vai para Cliente apenas
+    # - PAGADOR → campo Pagador
+    # - SOLICITANTE → campo Solicitante
+    # - CLIENTE → campo Cliente
+    # - PAGADOR/CLIENTE na mesma linha → preenche Pagador E Cliente com mesmo valor
+    # - Cada campo preenchido apenas com o que vier na tag — sem cópias automáticas
 
-    pagador = extrair("PAGADOR")
-    cliente = extrair("CLIENTE")
+    pagador     = extrair("PAGADOR")
+    solicitante = extrair("SOLICITANTE")
+    cliente     = extrair("CLIENTE")
 
-    # Verifica se PAGADOR e CLIENTE estão na mesma linha da tag
+    # Verifica se PAGADOR e CLIENTE estão na mesma linha (ex: PAGADOR/CLIENTE: NOME)
     match_mesmo = re.search(
-        r"^(PAGADOR|CLIENTE)\s*/\s*(PAGADOR|CLIENTE)\s*:\s*(.+)",
+        r"^(PAGADOR|CLIENTE)\s*/\s*(PAGADOR|CLIENTE)\s*:\s*([^\n\r]*)",
         texto, re.IGNORECASE | re.MULTILINE
     )
     if match_mesmo:
-        # Mesma linha — o valor é o cliente, Solicitante fica vazio
         valor_comum = match_mesmo.group(3).strip()
-        resultado["Cliente"] = valor_comum
+        # Verifica se o valor é outra chave de campo e descarta se for
+        if not re.match(r"^[A-Z\u00C0-\u00FF/]+\s*:", valor_comum, re.IGNORECASE):
+            resultado["Pagador"] = valor_comum
+            resultado["Cliente"] = valor_comum
     else:
+        if pagador:
+            resultado["Pagador"] = pagador
         if cliente:
             resultado["Cliente"] = cliente
-        if pagador:
-            # Solicitante só é preenchido se PAGADOR for diferente do CLIENTE
-            # Quando são iguais, o próprio cliente é o pagador — Solicitante fica vazio
-            def _norm(s):
-                import unicodedata
-                return unicodedata.normalize("NFD", str(s).strip().upper()).encode("ascii","ignore").decode()
-            if not cliente or _norm(pagador) != _norm(cliente):
-                resultado["Pagador"] = pagador
+
+    if solicitante:
+        resultado["Solicitante"] = solicitante
 
     # ── FÁBRICA e ORIGEM ─────────────────────────────────────────────
     # Origem é sempre definida pela fábrica (fixa por regra)
@@ -2349,11 +2344,13 @@ class UI(QWidget):
 
         r1 = QHBoxLayout(); r1.setSpacing(6)
         self.entradas["Data Apresentação"] = make_date()
-        self.entradas["Fábrica"]    = make_input()
-        self.entradas["Pagador"] = make_input()
-        r1.addWidget(make_field("Data", self.entradas["Data Apresentação"]), 1)
-        r1.addWidget(make_field("Fábrica", self.entradas["Fábrica"]), 2)
-        r1.addWidget(make_field("Pagador", self.entradas["Pagador"]), 2)
+        self.entradas["Fábrica"]     = make_input()
+        self.entradas["Pagador"]     = make_input()
+        self.entradas["Solicitante"] = make_input()
+        r1.addWidget(make_field("Data",        self.entradas["Data Apresentação"]), 1)
+        r1.addWidget(make_field("Fábrica",     self.entradas["Fábrica"]),           2)
+        r1.addWidget(make_field("Pagador",     self.entradas["Pagador"]),           2)
+        r1.addWidget(make_field("Solicitante", self.entradas["Solicitante"]),       2)
         v.addLayout(r1)
 
         def _atualizar_origem(texto):
@@ -3338,7 +3335,7 @@ class UI(QWidget):
 
         campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
                           "Destino", "Motorista", "Cavalo", "Pagador",
-                          "Agência", "UF", "Frete/Emp", "Frete/Mot",
+                          "Solicitante", "Agência", "UF", "Frete/Emp", "Frete/Mot",
                           "Rota", "Agenciamento", "Colocador", "Pagamento"]
         for campo in campos_simples:
             valor = dados.get(campo, "")
