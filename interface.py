@@ -946,6 +946,7 @@ class PlanilhaWidget(QWidget):
             font-weight: 700;
             padding: 2px 8px;
         """)
+        lbl_saldo.setVisible(False)
 
         btn_saldo = QPushButton("+/-")
         btn_saldo.setFixedHeight(22)
@@ -1031,13 +1032,16 @@ class PlanilhaWidget(QWidget):
                 border-radius: 2px;
             }}
         """)
+        bar.setVisible(False)
         h_lay.addWidget(bar)
 
         rodape = QHBoxLayout()
         lbl_t = QLabel(f"Total: {total:.0f} t")
         lbl_t.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        lbl_t.setVisible(False)
         lbl_c = QLabel(f"Carregado: {carregado:.0f} t")
         lbl_c.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        lbl_c.setVisible(False)
         rodape.addWidget(lbl_t)
         rodape.addStretch()
         rodape.addWidget(lbl_c)
