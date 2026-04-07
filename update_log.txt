@@ -1,4 +1,4 @@
-[06/04/2026 18:07:10]
+[07/04/2026 11:08:56]
 Local:  2.0.0
 Remota: 2.0.0
 URL:    https://raw.githubusercontent.com/felipecostapy/repo-viatop/master/version.txt

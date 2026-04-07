@@ -1701,9 +1701,7 @@ def parsear_mensagem_whatsapp(texto):
     if pagamento:
         resultado["Pagamento"] = pagamento
 
-    uf_campo = extrair("UF").upper()
-    if uf_campo:
-        resultado["UF"] = uf_campo
+    # UF já extraído junto com Destino acima
 
     produto = extrair("PRODUTO")
 
@@ -1743,23 +1741,25 @@ def parsear_mensagem_whatsapp(texto):
 
     destino_raw = extrair("DESTINO")
     uf = extrair("UF").upper()
-    if destino_raw and uf:
-        destino_completo = f"{destino_raw.strip()} - {uf}"
-    elif destino_raw:
-        destino_completo = destino_raw.strip()
-    else:
-        destino_completo = ""
 
-    if destino_completo:
-        sep = re.split(r"\s+(FAZ\.?\s|FAZENDA\s|SITIO\s|SÍTIO\s|CHACARA\s)", destino_completo, flags=re.IGNORECASE)
+    # UF sempre separado — vai para campo próprio
+    if uf:
+        resultado["UF"] = uf
+
+    # Destino: só a cidade, sem UF concatenado
+    destino_limpo = destino_raw.strip() if destino_raw else ""
+
+    if destino_limpo:
+        sep = re.split(r"\s+(FAZ\.?\s|FAZENDA\s|SITIO\s|SÍTIO\s|CHACARA\s)", destino_limpo, flags=re.IGNORECASE)
         if len(sep) >= 3:
             resultado["Destino"] = sep[0].strip()
             resultado["Fazenda"] = (sep[1] + sep[2]).strip()
         else:
-            resultado["Destino"] = destino_completo
+            resultado["Destino"] = destino_limpo
             resultado["Fazenda"] = ""
     else:
-        resultado["Destino"] = resultado["Fazenda"] = ""
+        resultado["Destino"] = resultado.get("Destino", "")
+        resultado["Fazenda"] = resultado.get("Fazenda", "")
 
     fazenda = extrair("FAZENDA")
     if fazenda:
@@ -2363,11 +2363,22 @@ class UI(QWidget):
         r2 = QHBoxLayout(); r2.setSpacing(6)
         self.entradas["Origem"]  = make_input()
         self.entradas["Destino"] = make_input()
+        self._uf_cab             = make_input()  # campo visual no cabeçalho
         self.entradas["Cliente"] = make_input()
-        r2.addWidget(make_field("Origem", self.entradas["Origem"]), 1)
-        r2.addWidget(make_field("Destino", self.entradas["Destino"]), 1)
-        r2.addWidget(make_field("Cliente", self.entradas["Cliente"]), 1)
+        r2.addWidget(make_field("Origem",  self.entradas["Origem"]),  1)
+        r2.addWidget(make_field("Destino", self.entradas["Destino"]), 2)
+        r2.addWidget(make_field("UF",      self._uf_cab),             1)
+        r2.addWidget(make_field("Cliente", self.entradas["Cliente"]), 2)
         v.addLayout(r2)
+
+        # Sincroniza UF do cabeçalho com o campo UF de Dados da Planilha
+        def _sync_uf_cab(txt):
+            w = self.entradas.get("UF")
+            if w and isinstance(w, QLineEdit):
+                w.blockSignals(True)
+                w.setText(txt.upper())
+                w.blockSignals(False)
+        self._uf_cab.textChanged.connect(lambda t: _sync_uf_cab(t))
 
         self.entradas["Fazenda"] = make_input()
         v.addWidget(make_field("Fazenda", self.entradas["Fazenda"]))
@@ -2463,6 +2474,8 @@ class UI(QWidget):
         r1 = QHBoxLayout(); r1.setSpacing(6)
         self.entradas["Agência"]   = make_input()
         self.entradas["UF"]        = make_input()
+        self.entradas["UF"].textChanged.connect(
+            lambda t: self._uf_cab.setText(t.upper()) if hasattr(self, "_uf_cab") else None)
         self.entradas["Frete/Emp"] = make_input()
         self.entradas["Frete/Mot"] = make_input()
         r1.addWidget(make_field("Agência",   self.entradas["Agência"]),   3)
@@ -3346,6 +3359,11 @@ class UI(QWidget):
                 w.setText(valor)
             elif isinstance(w, QComboBox):
                 w.setEditText(valor)
+
+        # Sincroniza campo UF do cabeçalho com o de Dados da Planilha
+        uf_val = dados.get("UF", "")
+        if hasattr(self, "_uf_cab") and uf_val:
+            self._uf_cab.setText(uf_val)
 
         for idx in range(num_pedidos):
             sufixo = f" {idx + 1}" if idx > 0 else ""

@@ -243,7 +243,7 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     CAMPOS = {
         "Origem":        "J10",
         "Data Apresentação": "J11",
-        "Destino":       "O10",
+        # "Destino": "O10",  # montado manualmente abaixo (Destino + UF)
         # "Pagador": "O11",  # removido — Pagador não vai para o PDF por enquanto
         "Fábrica":       "D15",
         "Cliente":       "I15",
@@ -375,6 +375,16 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
                 ws.range(prod_cel).value = prod
                 ws.range(peso_cel).value = peso
                 ws.range(emb_cel).value  = emb
+
+        # Destino no Excel = "CIDADE - UF"
+        destino_val = dados.get("Destino", "")
+        uf_val      = dados.get("UF", "")
+        if destino_val and uf_val:
+            ws.range("O10").value = f"{destino_val} - {uf_val}"
+        elif destino_val:
+            ws.range("O10").value = destino_val
+        else:
+            ws.range("O10").value = ""
 
         wb.save()
         app.api.CalculateFull()
