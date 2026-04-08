@@ -10,7 +10,7 @@ from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon, QPalette
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
 
-# ── Supabase — leitura para Controle de Pedidos ────────────────────
+# ── Supabase — BASE e Controle de Pedidos ─────────────────────────
 SUPABASE_URL = "https://xlirwzkmvkzldrssmhxg.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsaXJ3emttdmt6bGRyc3NtaHhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDgwMTksImV4cCI6MjA5MTE4NDAxOX0.ofTAEn628a-7JzF3REPj-tBcQJUrlXdfaFSbU5Ysfx4"
 
@@ -77,7 +77,100 @@ def _carregar_blocos_supabase():
         g["pct"] = (g["total_carregado"] / g["saldo_total"] * 100) if g["saldo_total"] > 0 else 0
 
     return [grupos[k] for k in ordem]
-from planilha import carregar_blocos_dados, carregar_base
+
+def _sb_request(endpoint, method="GET", body=None):
+    import urllib.request, urllib.parse, json as _json
+    req = urllib.request.Request(
+        f"{SUPABASE_URL}/rest/v1/{endpoint}",
+        data=json.dumps(body).encode() if body else None,
+        headers={
+            "apikey":        SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type":  "application/json",
+            "Prefer":        "return=representation",
+        },
+        method=method
+    )
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+def _carregar_base_supabase(mes=None):
+    """Carrega carregamentos do Supabase. mes = 'MM/YYYY' para filtrar."""
+    import urllib.parse
+    filtros = ["peso=gt.0", "order=data.asc,id.asc", "limit=2000"]
+    if mes:
+        try:
+            m, y = mes.split("/")
+            import datetime as _dt
+            inicio = f"{y}-{m}-01"
+            ultimo = (_dt.date(int(y), int(m), 1).replace(day=28) +
+                      _dt.timedelta(days=4)).replace(day=1) - _dt.timedelta(days=1)
+            fim    = ultimo.strftime("%Y-%m-%d")
+            filtros += [f"data=gte.{inicio}", f"data=lte.{fim}"]
+        except Exception:
+            pass
+    qs   = "&".join(filtros)
+    rows = _sb_request(f"carregamentos?{qs}")
+    # Converte para lista de listas compatível com o _renderizar existente
+    # colunas visíveis: DATA(0) FILIAL(1) PAGADOR(2) MOTORISTA(3) PLACA(4)
+    #                   DESTINO(5) UF(6) PESO(7) STATUS(8) COLOCADOR(9) [id=19]
+    result = []
+    for r in rows:
+        data = str(r.get("data") or "")
+        if len(data) == 10:
+            data = f"{data[8:10]}/{data[5:7]}/{data[:4]}"
+        linha = [
+            data,                                    # 0  DATA
+            str(r.get("filial","") or ""),           # 1  FILIAL
+            str(r.get("pagador","") or ""),          # 2  PAGADOR
+            str(r.get("agencia","") or ""),          # 3  AGENCIA
+            str(r.get("motorista","") or ""),        # 4  MOTORISTA
+            str(r.get("placa","") or ""),            # 5  PLACA
+            str(r.get("fabrica","") or ""),          # 6  FABRICA
+            str(r.get("destino","") or ""),          # 7  DESTINO
+            str(r.get("uf","") or ""),               # 8  UF
+            str(r.get("peso","") or ""),             # 9  PESO
+            str(r.get("frete_emp","") or ""),        # 10 FRETE/E
+            str(r.get("frete_mot","") or ""),        # 11 FRETE/M
+            str(r.get("rota","") or ""),             # 12 ROTA
+            str(r.get("agenciamento","") or ""),     # 13 AGENCIAMENTO
+            str(r.get("status","") or ""),           # 14 STATUS
+            str(r.get("pedido","") or ""),           # 15 PEDIDO
+            str(r.get("produto","") or ""),          # 16 PRODUTO
+            str(r.get("embalagem","") or ""),        # 17 EMBALAGEM
+            str(r.get("colocador","") or ""),        # 18 COLOCADOR
+            r.get("id"),                             # 19 ID (chave Supabase)
+        ]
+        result.append(linha)
+    return result
+
+def _meses_supabase():
+    """Retorna lista de meses disponíveis no Supabase."""
+    rows = _sb_request("carregamentos?select=data&peso=gt.0&order=data.asc&limit=5000")
+    meses = set()
+    for r in rows:
+        d = str(r.get("data") or "")
+        if len(d) >= 7:
+            meses.add(f"{d[5:7]}/{d[:4]}")
+    return sorted(meses, key=lambda x: (x[3:], x[:2]))
+
+def _atualizar_supabase_linha(sb_id, campos):
+    """Atualiza campos de um registro no Supabase pelo id."""
+    _sb_request(f"carregamentos?id=eq.{sb_id}", method="PATCH", body=campos)
+
+def _deletar_supabase_linha(sb_id):
+    """Deleta um registro do Supabase pelo id."""
+    import urllib.request
+    req = urllib.request.Request(
+        f"{SUPABASE_URL}/rest/v1/carregamentos?id=eq.{sb_id}",
+        headers={
+            "apikey":        SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        },
+        method="DELETE"
+    )
+    urllib.request.urlopen(req, timeout=10)
+from planilha import carregar_blocos_dados
 
 BG       = "#0d1117"
 SURFACE  = "#161b22"
@@ -276,13 +369,7 @@ def salvar_historico(dados, caminho_arquivo, conta=None, usuario=None, supabase_
     historico = historico[:200]
     path.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # Tenta gravar na planilha centralizada (não bloqueia se falhar)
-    if conta and conta != "(nenhuma conta)":
-        try:
-            from planilha import gravar_historico_planilha
-            gravar_historico_planilha(conta, registro)
-        except Exception:
-            pass
+    # gravar_historico_planilha removido — histórico mantido localmente
 
 def carregar_historico():
     path = _historico_path()
@@ -1323,11 +1410,12 @@ class BaseWidget(QWidget):
         titulo = QLabel("CONTROLE DE ORDENS")
         titulo.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px; background: transparent;")
 
+        # combo_conta mantido para compatibilidade com _on_sucesso
         self._combo_conta = QComboBox()
         self._combo_conta.setFixedWidth(210)
         self._combo_conta.setStyleSheet(COMBO_SS)
 
-        # Select de mês/aba
+        # Select de mês
         self._combo_mes = QComboBox()
         self._combo_mes.setFixedWidth(150)
         self._combo_mes.setStyleSheet(COMBO_SS)
@@ -1450,45 +1538,30 @@ class BaseWidget(QWidget):
         self._combo_conta.addItems(contas if contas else ["(nenhuma conta)"])
 
     def _atualizar_abas(self):
-        conta = self._combo_conta.currentText()
-        if conta == "(nenhuma conta)":
-            return
         try:
-            from planilha import listar_abas_base, _aba_mais_recente
-            abas = listar_abas_base(conta)
+            meses = _meses_supabase()
             self._combo_mes.clear()
-            self._combo_mes.addItems(abas)
-            # Seleciona a aba mais recente por padrão
-            mais_recente = _aba_mais_recente(abas)
-            idx = self._combo_mes.findText(mais_recente)
-            if idx >= 0:
-                self._combo_mes.setCurrentIndex(idx)
+            self._combo_mes.addItems(meses)
+            if meses:
+                self._combo_mes.setCurrentIndex(len(meses) - 1)
             self._aba_selecionada = self._combo_mes.currentText()
-            self._lbl_status.setText(f"{len(abas)} aba(s) encontrada(s) — selecionado: {self._aba_selecionada}")
+            self._lbl_status.setText(f"{len(meses)} mes(es) disponível(is) no banco de dados")
         except Exception as e:
-            self._lbl_status.setText(f"Erro ao listar abas: {e}")
+            self._lbl_status.setText(f"Erro ao listar meses: {e}")
 
     def _carregar(self):
-        conta = self._combo_conta.currentText()
-        if conta == "(nenhuma conta)":
-            self._lbl_status.setText("Configure uma conta Gmail primeiro.")
-            return
-
-        # Usa aba do combo; se não carregou ainda, lista primeiro
-        aba = self._combo_mes.currentText().strip()
-        if not aba:
+        mes = self._combo_mes.currentText().strip()
+        if not mes:
             self._atualizar_abas()
-            aba = self._combo_mes.currentText().strip()
-
-        self._aba_selecionada = aba
-        self._lbl_status.setText(f"Carregando {aba}...")
+            mes = self._combo_mes.currentText().strip()
+        self._aba_selecionada = mes
+        self._lbl_status.setText(f"Carregando {mes} do banco de dados...")
         QApplication.processEvents()
-
         try:
-            dados = carregar_base(conta, aba=aba)
+            dados = _carregar_base_supabase(mes=mes)
             self._todos_dados = dados
             self._renderizar(dados)
-            self._lbl_status.setText(f"{len(dados)} ordem(ns) em '{aba}'")
+            self._lbl_status.setText(f"{len(dados)} ordem(ns) em '{mes}'")
         except Exception as e:
             self._lbl_status.setText(f"Erro: {e}")
 
@@ -1632,7 +1705,6 @@ class BaseWidget(QWidget):
         self._tabela.setItem(row, 9, self._make_btn_item("OK", "#2ea043"))
 
     def _salvar_edicao(self, row, dados_orig):
-        conta = self._combo_conta.currentText()
         novos_visiveis = []
         for c in range(9):
             w = self._tabela.cellWidget(row, c)
@@ -1651,33 +1723,38 @@ class BaseWidget(QWidget):
                                   5: 7, 6: 8, 7: 9, 8: 14, 9: 18}
 
         try:
-            from planilha import atualizar_linha_base, carregar_base_com_linhas
-            num_linha = self._row_to_linha_planilha.get(row) or self._encontrar_linha_base(dados_orig, conta)
-            if not num_linha:
-                QMessageBox.warning(self, "Aviso", "Linha não encontrada na planilha.")
+            sb_id = self._row_to_linha_planilha.get(row)
+            if not sb_id:
+                QMessageBox.warning(self, "Aviso", "ID do registro não encontrado.")
                 return
 
-            # Lê a linha atual completa da planilha para não perder colunas não visíveis
-            linhas = carregar_base_com_linhas(conta, aba=self._aba_selecionada)
-            linha_atual = None
-            for n, l in linhas:
-                if n == num_linha:
-                    linha_atual = list(l)
-                    break
+            # Monta campos para PATCH no Supabase
+            import datetime as _dt
+            def _parse_data_br(v):
+                try:
+                    return _dt.datetime.strptime(str(v).strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+                except Exception:
+                    return None
 
-            if linha_atual is None:
-                QMessageBox.warning(self, "Aviso", "Linha não encontrada na planilha.")
-                return
-
-            # Garante tamanho mínimo de 17 colunas
-            while len(linha_atual) < 17:
-                linha_atual.append("")
-
-            # Aplica apenas as colunas editadas
-            for idx_visivel, idx_planilha in VISIVEL_PARA_PLANILHA.items():
-                linha_atual[idx_planilha] = novos_visiveis[idx_visivel]
-
-            atualizar_linha_base(conta, num_linha, linha_atual, aba=self._aba_selecionada)
+            campos = {
+                "filial":    novos_visiveis[1].upper(),
+                "pagador":   novos_visiveis[2].upper(),
+                "motorista": novos_visiveis[3].upper(),
+                "placa":     novos_visiveis[4].upper(),
+                "destino":   novos_visiveis[5].upper(),
+                "uf":        novos_visiveis[6].upper(),
+                "status":    novos_visiveis[8].upper(),
+                "colocador": novos_visiveis[9].upper() if len(novos_visiveis) > 9 else "",
+            }
+            data_val = _parse_data_br(novos_visiveis[0])
+            if data_val:
+                campos["data"] = data_val
+            try:
+                campos["peso"] = float(str(novos_visiveis[7]).replace(",","."))
+            except Exception:
+                pass
+            campos = {k: v for k, v in campos.items() if v not in ("", None)}
+            _atualizar_supabase_linha(sb_id, campos)
 
             STATUS_OPTS_COR = {
                 "CARREGADO": "#1a3a1a", "NÃO CARREGADO": "#3a1a1a",
@@ -1708,47 +1785,22 @@ class BaseWidget(QWidget):
         conta = self._combo_conta.currentText()
         resp = QMessageBox.question(
             self, "Confirmar",
-            "Deseja remover esta linha da planilha BASE?\n\n"
-            "Se houver um carregamento correspondente na planilha de Pedidos (DADOS), "
-            "ele também será removido.",
+            "Deseja remover este registro do banco de dados?",
             QMessageBox.Yes | QMessageBox.No
         )
         if resp != QMessageBox.Yes:
             return
         try:
-            from planilha import deletar_linha_base, carregar_base_com_linhas
-            num_linha = self._row_to_linha_planilha.get(row) or self._encontrar_linha_base(dados, conta)
-            if num_linha:
-                # Busca a linha completa para identificar o carregamento em DADOS
-                linha_completa = None
-                try:
-                    linhas = carregar_base_com_linhas(conta, aba=self._aba_selecionada)
-                    for n, l in linhas:
-                        if n == num_linha:
-                            linha_completa = l
-                            break
-                except Exception:
-                    pass
-                deletar_linha_base(
-                    conta, num_linha,
-                    aba=self._aba_selecionada,
-                    dados_linha=linha_completa
-                )
+            sb_id = self._row_to_linha_planilha.get(row)
+            if sb_id:
+                _deletar_supabase_linha(sb_id)
             self._tabela.removeRow(row)
-            self._lbl_status.setText("Linha removida da BASE e dos Pedidos.")
+            self._lbl_status.setText("Registro removido do banco de dados.")
         except Exception as e:
             QMessageBox.critical(self, "Erro", str(e))
 
     def _encontrar_linha_base(self, dados, conta):
-        from planilha import carregar_base_com_linhas
-        try:
-            linhas = carregar_base_com_linhas(conta, aba=self._aba_selecionada)
-            chave = [str(dados[i]) if i < len(dados) else "" for i in range(4)]
-            for num_linha, linha in linhas:
-                if [str(linha[i]) if i < len(linha) else "" for i in range(4)] == chave:
-                    return num_linha
-        except Exception:
-            pass
+        # Não mais necessário — BASE usa Supabase com id direto
         return None
 
 
