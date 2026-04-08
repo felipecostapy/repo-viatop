@@ -150,6 +150,146 @@ def adicionar_conta_gmail():
 
     return email
 
+# ── Supabase ───────────────────────────────────────────────────────
+SUPABASE_URL = "https://xlirwzkmvkzldrssmhxg.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsaXJ3emttdmt6bGRyc3NtaHhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDgwMTksImV4cCI6MjA5MTE4NDAxOX0.ofTAEn628a-7JzF3REPj-tBcQJUrlXdfaFSbU5Ysfx4"
+
+def gravar_supabase(dados, usuario=None):
+    """Grava carregamento no Supabase via API REST. Silencioso em caso de erro."""
+    import urllib.request
+    import urllib.error
+    import datetime as _dt
+
+    def _data(v):
+        if not v: return None
+        for fmt in ["%d/%m/%Y", "%Y-%m-%d"]:
+            try: return _dt.datetime.strptime(str(v).strip(), fmt).strftime("%Y-%m-%d")
+            except: pass
+        return None
+
+    def _float(v):
+        try: return float(str(v or "0").replace(".", "").replace(",", "."))
+        except: return 0.0
+
+    registro = {
+        "data":         _data(dados.get("Data Apresentação")),
+        "filial":       str(dados.get("empresa", "")).upper(),
+        "pagador":      str(dados.get("Pagador", "")).upper(),
+        "motorista":    str(dados.get("Motorista", "")).upper(),
+        "placa":        str(dados.get("Cavalo", "")).upper(),
+        "fabrica":      str(dados.get("Fábrica", "")).upper(),
+        "destino":      str(dados.get("Destino", "")).upper(),
+        "uf":           str(dados.get("UF", "")).upper(),
+        "peso":         _float(dados.get("Peso")),
+        "frete_emp":    _float(dados.get("Frete/Emp")),
+        "frete_mot":    _float(dados.get("Frete/Mot")),
+        "rota":         str(dados.get("Rota", "")).upper(),
+        "agenciamento": str(dados.get("Agenciamento", "")).upper(),
+        "status":       "AGUARDANDO",
+        "pedido":       str(dados.get("Pedido", "")).upper(),
+        "produto":      str(dados.get("Produto", "")).upper(),
+        "embalagem":    str(dados.get("Embalagem", "")).upper(),
+        "colocador":    str(dados.get("Colocador", "")).upper(),
+        "pagamento":    str(dados.get("Pagamento", "")).upper(),
+        "usuario":      str(usuario or "").upper(),
+    }
+
+    # Remove campos vazios
+    registro = {k: v for k, v in registro.items() if v not in (None, "", 0, 0.0)}
+
+    try:
+        body = json.dumps(registro).encode("utf-8")
+        req  = urllib.request.Request(
+            f"{SUPABASE_URL}/rest/v1/carregamentos",
+            data=body,
+            headers={
+                "apikey":        SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type":  "application/json",
+                "Prefer":        "return=representation",
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            resultado = json.loads(resp.read().decode("utf-8"))
+            if resultado and isinstance(resultado, list):
+                return resultado[0].get("id")
+    except Exception as e:
+        try:
+            log = os.path.join(os.path.dirname(os.path.abspath(__file__)), "supabase_log.txt")
+            with open(log, "a", encoding="utf-8") as f:
+                import datetime as _dt2
+                f.write(f"[{_dt2.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] Erro INSERT: {e}\n")
+        except:
+            pass
+    return None
+
+def atualizar_supabase(supabase_id, dados, usuario=None):
+    """Atualiza registro existente no Supabase via PATCH. Silencioso em caso de erro."""
+    import urllib.request
+    import urllib.error
+    import datetime as _dt
+
+    if not supabase_id:
+        return
+
+    def _data(v):
+        if not v: return None
+        for fmt in ["%d/%m/%Y", "%Y-%m-%d"]:
+            try: return _dt.datetime.strptime(str(v).strip(), fmt).strftime("%Y-%m-%d")
+            except: pass
+        return None
+
+    def _float(v):
+        try: return float(str(v or "0").replace(".", "").replace(",", "."))
+        except: return 0.0
+
+    registro = {
+        "data":         _data(dados.get("Data Apresentação")),
+        "filial":       str(dados.get("empresa", "")).upper(),
+        "pagador":      str(dados.get("Pagador", "")).upper(),
+        "motorista":    str(dados.get("Motorista", "")).upper(),
+        "placa":        str(dados.get("Cavalo", "")).upper(),
+        "fabrica":      str(dados.get("Fábrica", "")).upper(),
+        "destino":      str(dados.get("Destino", "")).upper(),
+        "uf":           str(dados.get("UF", "")).upper(),
+        "peso":         _float(dados.get("Peso")),
+        "frete_emp":    _float(dados.get("Frete/Emp")),
+        "frete_mot":    _float(dados.get("Frete/Mot")),
+        "rota":         str(dados.get("Rota", "")).upper(),
+        "agenciamento": str(dados.get("Agenciamento", "")).upper(),
+        "pedido":       str(dados.get("Pedido", "")).upper(),
+        "produto":      str(dados.get("Produto", "")).upper(),
+        "embalagem":    str(dados.get("Embalagem", "")).upper(),
+        "colocador":    str(dados.get("Colocador", "")).upper(),
+        "pagamento":    str(dados.get("Pagamento", "")).upper(),
+        "usuario":      str(usuario or "").upper(),
+    }
+    registro = {k: v for k, v in registro.items() if v not in (None, "", 0, 0.0)}
+
+    try:
+        body = json.dumps(registro).encode("utf-8")
+        req  = urllib.request.Request(
+            f"{SUPABASE_URL}/rest/v1/carregamentos?id=eq.{supabase_id}",
+            data=body,
+            headers={
+                "apikey":        SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type":  "application/json",
+                "Prefer":        "return=minimal",
+            },
+            method="PATCH"
+        )
+        urllib.request.urlopen(req, timeout=8)
+    except Exception as e:
+        try:
+            log = os.path.join(os.path.dirname(os.path.abspath(__file__)), "supabase_log.txt")
+            with open(log, "a", encoding="utf-8") as f:
+                import datetime as _dt2
+                f.write(f"[{_dt2.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] Erro PATCH id={supabase_id}: {e}\n")
+        except:
+            pass
+
 def formatar_telefone(telefone):
     if not telefone:
         return ""
@@ -444,5 +584,15 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         assunto      = dados.get("_email_assunto")      or montar_email(dados)[0]
         corpo        = dados.get("_email_corpo")        or montar_email(dados)[1]
         enviar_email_gmail(conta_gmail, destinatario, assunto, corpo, pdf_path)
+
+    # Grava ou atualiza no Supabase (silencioso — não bloqueia em caso de erro)
+    usuario     = dados.get("_usuario", "")
+    supabase_id = dados.get("_supabase_id")
+    if supabase_id:
+        atualizar_supabase(supabase_id, dados, usuario=usuario)
+        dados["_supabase_id_resultado"] = supabase_id
+    else:
+        novo_id = gravar_supabase(dados, usuario=usuario)
+        dados["_supabase_id_resultado"] = novo_id
 
     return caminho

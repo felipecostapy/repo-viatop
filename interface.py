@@ -164,7 +164,7 @@ def _historico_path():
         return Path(sys.executable).parent / "historico.json"
     return Path(__file__).parent / "historico.json"
 
-def salvar_historico(dados, caminho_arquivo, conta=None, usuario=None):
+def salvar_historico(dados, caminho_arquivo, conta=None, usuario=None, supabase_id=None):
     path = _historico_path()
     try:
         historico = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
@@ -178,6 +178,8 @@ def salvar_historico(dados, caminho_arquivo, conta=None, usuario=None):
         "placa":     dados.get("Cavalo", ""),
         "empresa":   dados.get("empresa", ""),
         "arquivo":   caminho_arquivo,
+        "dados":       {k: v for k, v in dados.items() if not k.startswith("_")},
+        "supabase_id": supabase_id,
     }
     historico.insert(0, registro)
     historico = historico[:200]
@@ -384,11 +386,95 @@ class HistoricoWidget(QWidget):
         """)
         btn_editar.clicked.connect(lambda _, a=arquivo_xlsx: self._abrir_arquivo(a))
 
+        btn_reeditar = QPushButton("REEDITAR")
+        btn_reeditar.setFixedHeight(28)
+        btn_reeditar.setFont(QFont("Arial", 8, QFont.Bold))
+        btn_reeditar.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: 1px solid #e3b341;
+                border-radius: 6px;
+                color: #e3b341;
+                font-size: 9px;
+                padding: 0px 8px;
+            }}
+            QPushButton:hover {{ background: #e3b34122; }}
+        """)
+        btn_reeditar.clicked.connect(lambda _, reg=r: self._reeditar_ordem(reg))
+
         h.addWidget(lbl_hora)
         h.addLayout(info, 1)
         h.addWidget(badge)
         h.addWidget(btn_editar)
+        h.addWidget(btn_reeditar)
         return frame
+
+    def _reeditar_ordem(self, registro):
+        """Carrega dados do histórico no formulário e permite reeditar/renegerar."""
+        dados = registro.get("dados")
+        if not dados:
+            QMessageBox.warning(self, "Aviso",
+                "Este registro nao possui dados completos para reeditar. "
+                "Apenas ordens geradas apos a atualizacao podem ser reeditadas.")
+            return
+
+        arquivo_antigo_xlsx = registro.get("arquivo", "")
+        arquivo_antigo_pdf  = arquivo_antigo_xlsx.replace(".xlsx", ".pdf")
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Reeditar Ordem")
+        dlg.setFixedSize(420, 200)
+        dlg.setStyleSheet(DIALOG_SS)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setSpacing(12)
+
+        motorista = dados.get("Motorista", "")
+        placa     = dados.get("Cavalo", "")
+        lbl = QLabel(f"Reeditar ordem de <b>{motorista}</b> — placa <b>{placa}</b>")
+        lbl.setWordWrap(True)
+        lay.addWidget(lbl)
+
+        lbl2 = QLabel("Os arquivos antigos (xlsx e pdf) serão deletados e novos gerados.")
+        lbl2.setStyleSheet(f"color: #e3b341; font-size: 11px; background: transparent;")
+        lbl2.setWordWrap(True)
+        lay.addWidget(lbl2)
+
+        btns = QHBoxLayout()
+        bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
+        bo = QPushButton("CONTINUAR"); bo.setObjectName("btn_ok")
+        btns.addWidget(bc); btns.addWidget(bo)
+        lay.addLayout(btns)
+        bc.clicked.connect(dlg.reject)
+
+        def continuar():
+            dlg.accept()
+            # Encontra a janela principal (UI) para navegar e preencher
+            ui = None
+            w = self.parent()
+            while w:
+                if hasattr(w, "_nav") and hasattr(w, "_preencher_campos"):
+                    ui = w
+                    break
+                w = w.parent() if hasattr(w, "parent") else None
+
+            if ui is None:
+                QMessageBox.warning(self, "Aviso", "Nao foi possivel navegar para o formulario.")
+                return
+
+            # Injeta supabase_id para fazer UPDATE em vez de INSERT
+            supabase_id = registro.get("supabase_id")
+            if supabase_id:
+                dados["_supabase_id"] = supabase_id
+            # Preenche formulário com dados da ordem antiga
+            ui._preencher_campos(dados)
+            # Navega para aba de geração de ordem
+            ui._nav(0)
+            # Guarda caminhos antigos para deletar após gerar
+            ui._arquivos_para_deletar = [arquivo_antigo_xlsx, arquivo_antigo_pdf]
+
+        bo.clicked.connect(continuar)
+        dlg.exec()
 
     def _abrir_arquivo(self, caminho):
         import subprocess
@@ -2885,6 +2971,8 @@ class UI(QWidget):
         self.overlay.show()
         self.overlay.raise_()
 
+        # Injeta usuário logado nos dados para gravar no Supabase
+        dados["_usuario"] = self.usuario_logado or ""
         self._thread = GeradorThread(dados, pasta, email, conta_gmail)
         self._thread.sucesso.connect(self._on_sucesso)
         self._thread.erro.connect(self._on_erro)
@@ -3105,11 +3193,23 @@ class UI(QWidget):
         for b in [self.btn1, self.btn2, self.btn3]:
             b.setEnabled(True)
 
-        conta   = self._planilha_widget._combo_conta.currentText()
+        # Deleta arquivos antigos se for reeedição
+        if hasattr(self, "_arquivos_para_deletar"):
+            for arq in self._arquivos_para_deletar:
+                try:
+                    if arq and os.path.exists(arq) and arq != caminho:
+                        os.remove(arq)
+                except Exception:
+                    pass
+            del self._arquivos_para_deletar
+
+        conta       = self._planilha_widget._combo_conta.currentText()
+        supabase_id = self._thread.dados.get("_supabase_id_resultado")
         salvar_historico(
             self._thread.dados, caminho,
-            conta   = conta if conta != "(nenhuma conta)" else None,
-            usuario = self.usuario_logado,
+            conta       = conta if conta != "(nenhuma conta)" else None,
+            usuario     = self.usuario_logado,
+            supabase_id = supabase_id,
         )
 
         msg = QMessageBox(self)
