@@ -9,6 +9,74 @@ from PySide6.QtCore import Qt, QDate, QThread, Signal, QTimer, QPropertyAnimatio
 from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon, QPalette
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
+
+# ── Supabase — leitura para Controle de Pedidos ────────────────────
+SUPABASE_URL = "https://xlirwzkmvkzldrssmhxg.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsaXJ3emttdmt6bGRyc3NtaHhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDgwMTksImV4cCI6MjA5MTE4NDAxOX0.ofTAEn628a-7JzF3REPj-tBcQJUrlXdfaFSbU5Ysfx4"
+
+def _carregar_blocos_supabase():
+    import urllib.request
+    import urllib.parse
+    import json as _json
+
+    req = urllib.request.Request(
+        f"{SUPABASE_URL}/rest/v1/carregamentos"
+        f"?select=pedido,produto,pagador,destino,peso,status,data,placa"
+        f"&peso=gt.0&order=pedido.asc&limit=5000",
+        headers={
+            "apikey":        SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        }
+    )
+    with urllib.request.urlopen(req, timeout=10) as r:
+        linhas = _json.loads(r.read().decode("utf-8"))
+
+    # Agrupa por pedido + produto + cliente
+    grupos = {}
+    ordem  = []
+    for l in linhas:
+        ped  = str(l.get("pedido", "") or "").strip().upper()
+        prod = str(l.get("produto", "") or "").strip().upper()
+        cli  = str(l.get("pagador", "") or "").strip().upper()
+        if not ped and not cli:
+            continue
+        key = f"{ped}||{prod}||{cli}"
+        if key not in grupos:
+            grupos[key] = {
+                "pedido":          ped,
+                "produto":         prod,
+                "cliente":         cli,
+                "cidade":          str(l.get("destino", "") or "").strip().upper(),
+                "destino":         str(l.get("destino", "") or "").strip().upper(),
+                "saldo_total":     0,
+                "total_carregado": 0,
+                "saldo_restante":  0,
+                "pct":             0,
+                "linhas":          [],
+            }
+            ordem.append(key)
+        try:
+            peso = float(l.get("peso") or 0)
+        except Exception:
+            peso = 0.0
+        grupos[key]["total_carregado"] += peso
+        grupos[key]["linhas"].append({
+            "dataStr": str(l.get("data") or "")[:10],
+            "placa":   str(l.get("placa") or "").strip().upper(),
+            "peso":    peso,
+            "status":  str(l.get("status") or "").strip().upper(),
+            "nota":    "",
+            "frete":   "",
+        })
+
+    # Busca saldo_total da planilha DADOS (aba PEDIDOS) se disponível,
+    # senão usa total_carregado como base (saldo_restante = 0 até atualizar)
+    for key in ordem:
+        g = grupos[key]
+        g["saldo_restante"] = g["saldo_total"] - g["total_carregado"]
+        g["pct"] = (g["total_carregado"] / g["saldo_total"] * 100) if g["saldo_total"] > 0 else 0
+
+    return [grupos[k] for k in ordem]
 from planilha import carregar_blocos_dados, carregar_base
 
 BG       = "#0d1117"
@@ -99,6 +167,29 @@ def make_combo(items):
     cb.setMinimumHeight(32)
     cb.setCompleter(QCompleter(items))
     cb.completer().setCaseSensitivity(Qt.CaseInsensitive)
+    cb.setStyleSheet(f"""
+        QComboBox {{
+            background: {SURFACE}; border: 1px solid {BORDER2};
+            border-radius: 6px; padding: 6px 10px;
+            color: {TEXT}; font-size: 12px;
+        }}
+        QComboBox:focus {{ border-color: {ACCENT}; }}
+        QComboBox::drop-down {{ border: none; width: 20px; }}
+        QComboBox::down-arrow {{
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 5px solid {MUTED};
+            width: 0; height: 0; margin-right: 6px;
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {SURFACE};
+            border: 1px solid {BORDER2};
+            color: {TEXT};
+            selection-background-color: {ACCENT}33;
+            selection-color: {TEXT};
+            outline: none;
+        }}
+    """)
     return cb
 
 def make_date():
@@ -927,16 +1018,10 @@ class PlanilhaWidget(QWidget):
             self._combo_conta.addItem("(nenhuma conta)")
 
     def _carregar(self):
-        conta = self._combo_conta.currentText()
-        if conta == "(nenhuma conta)":
-            self._lbl_status.setText("Configure uma conta Gmail primeiro.")
-            return
-
-        self._lbl_status.setText("Carregando...")
+        self._lbl_status.setText("Carregando do banco de dados...")
         QApplication.processEvents()
-
         try:
-            blocos = carregar_blocos_dados(conta)
+            blocos = _carregar_blocos_supabase()
             self._todos_blocos = blocos
             self._renderizar(blocos)
             self._lbl_status.setText(f"{len(blocos)} pedido(s) encontrado(s)")
@@ -3226,7 +3311,7 @@ class UI(QWidget):
         """)
         msg.exec()
 
-        self._dialog_gravar_planilha(self._thread.dados)
+        # Popup de gravação na planilha removido — dados já vão para o Supabase automaticamente
 
     def _dialog_gravar_planilha(self, dados):
         conta = self._planilha_widget._combo_conta.currentText()
