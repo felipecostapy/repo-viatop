@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "c:\Users\trans\Documents\GitHub\repo-viatop\interface.py", line 2054, in run
+    caminho = gerar_ordem(self.dados, self.pasta, self.email, self.conta_gmail)
+  File "c:\Users\trans\Documents\GitHub\repo-viatop\gerador.py", line 356, in gerar_ordem
+    raise Exception(f"Campo obrigatório não preenchido: {campo}")
+Exception: Campo obrigatório não preenchido: Pedido

@@ -140,6 +140,7 @@ def _carregar_base_supabase(mes=None):
             str(r.get("embalagem","") or ""),        # 17 EMBALAGEM
             str(r.get("colocador","") or ""),        # 18 COLOCADOR
             r.get("id"),                             # 19 ID (chave Supabase)
+            str(r.get("pagamento","") or ""),        # 20 PAGAMENTO
         ]
         result.append(linha)
     return result
@@ -355,12 +356,16 @@ def salvar_historico(dados, caminho_arquivo, conta=None, usuario=None, supabase_
     except Exception:
         historico = []
 
+    # Normaliza empresa para formato canônico
+    _emp_raw = str(dados.get("empresa", "") or "")
+    _emp_norm = "Agrovia" if "AGRO" in _emp_raw.upper() else ("TopBrasil" if _emp_raw else "")
+
     registro = {
         "data_hora": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
         "usuario":   usuario or "",
         "motorista": dados.get("Motorista", ""),
         "placa":     dados.get("Cavalo", ""),
-        "empresa":   dados.get("empresa", ""),
+        "empresa":   _emp_norm,
         "arquivo":   caminho_arquivo,
         "dados":       {k: v for k, v in dados.items() if not k.startswith("_")},
         "supabase_id": supabase_id,
@@ -548,26 +553,9 @@ class HistoricoWidget(QWidget):
         arquivo_xlsx = arquivo if arquivo.endswith(".xlsx") else arquivo.replace(".pdf", ".xlsx")
 
         btn_editar = QPushButton("EDITAR")
-        btn_editar.setToolTip(f"Abrir: {arquivo_xlsx}")
         btn_editar.setFixedHeight(28)
         btn_editar.setFont(QFont("Arial", 8, QFont.Bold))
         btn_editar.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: 1px solid {BORDER2};
-                border-radius: 6px;
-                color: {MUTED};
-                font-size: 9px;
-                padding: 0px 8px;
-            }}
-            QPushButton:hover {{ border-color: {ACCENT}; color: {ACCENT}; }}
-        """)
-        btn_editar.clicked.connect(lambda _, a=arquivo_xlsx: self._abrir_arquivo(a))
-
-        btn_reeditar = QPushButton("REEDITAR")
-        btn_reeditar.setFixedHeight(28)
-        btn_reeditar.setFont(QFont("Arial", 8, QFont.Bold))
-        btn_reeditar.setStyleSheet(f"""
             QPushButton {{
                 background: transparent;
                 border: 1px solid #e3b341;
@@ -578,13 +566,12 @@ class HistoricoWidget(QWidget):
             }}
             QPushButton:hover {{ background: #e3b34122; }}
         """)
-        btn_reeditar.clicked.connect(lambda _, reg=r: self._reeditar_ordem(reg))
+        btn_editar.clicked.connect(lambda _, reg=r: self._reeditar_ordem(reg))
 
         h.addWidget(lbl_hora)
         h.addLayout(info, 1)
         h.addWidget(badge)
         h.addWidget(btn_editar)
-        h.addWidget(btn_reeditar)
         return frame
 
     def _reeditar_ordem(self, registro):
@@ -640,14 +627,16 @@ class HistoricoWidget(QWidget):
                 QMessageBox.warning(self, "Aviso", "Nao foi possivel navegar para o formulario.")
                 return
 
-            # Injeta supabase_id para fazer UPDATE em vez de INSERT
-            supabase_id = registro.get("supabase_id")
-            if supabase_id:
-                dados["_supabase_id"] = supabase_id
+            # Define empresa correta da ordem
+            empresa_ordem = dados.get("empresa", "")
+            if empresa_ordem and hasattr(ui, "_aplicar_empresa"):
+                ui._aplicar_empresa(empresa_ordem)
             # Preenche formulário com dados da ordem antiga
             ui._preencher_campos(dados)
             # Navega para aba de geração de ordem
             ui._nav(0)
+            # Guarda supabase_id para UPDATE em vez de INSERT
+            ui._reeditando_supabase_id = registro.get("supabase_id")
             # Guarda caminhos antigos para deletar após gerar
             ui._arquivos_para_deletar = [arquivo_antigo_xlsx, arquivo_antigo_pdf]
 
@@ -1461,7 +1450,6 @@ class BaseWidget(QWidget):
         topo.addWidget(self._inp_busca)
         topo.addWidget(self._combo_mes)
         topo.addWidget(btn_abas)
-        topo.addWidget(self._combo_conta)
         topo.addWidget(btn_carregar)
         root.addLayout(topo)
 
@@ -1510,15 +1498,23 @@ class BaseWidget(QWidget):
         self._tabela.horizontalHeader().setStretchLastSection(True)
         self._tabela.setSortingEnabled(True)
 
-        # Colunas visíveis: DATA(0), FILIAL(1), PAGADOR(2), MOTORISTA(4), PLACA(5),
-        #                   DESTINO(7), UF(8), PESO(9), STATUS(14)
-        self._colunas_visiveis = [0, 1, 2, 4, 5, 7, 8, 9, 14, 18]
-        COLUNAS = ["DATA", "FILIAL", "PAGADOR", "MOTORISTA", "PLACA",
-                   "DESTINO", "UF", "PESO", "STATUS", "COLOCADOR", "", ""]
+        # Ordem das colunas: STATUS primeiro, depois os demais
+        # índices na lista do Supabase:
+        # STATUS(14) DATA(0) FILIAL(1) PAGADOR(2) PEDIDO(15) PRODUTO(16)
+        # MOTORISTA(4) PLACA(5) DESTINO(7) UF(8) PESO(9) COLOCADOR(18)
+        # STATUS(14) DATA(0) FILIAL(1) PAGADOR(2) PEDIDO(15) PRODUTO(16)
+        # MOTORISTA(4) PLACA(5) DESTINO(7) UF(8) PESO(9)
+        # FRETE/E(10) FRETE/M(11) ROTA(12) AGENCIAMENTO(13) PAGAMENTO(20*) COLOCADOR(18)
+        # *PAGAMENTO não está na lista atual — adicionamos no índice 20 via _carregar_base_supabase
+        self._colunas_visiveis = [14, 0, 1, 2, 15, 16, 4, 5, 7, 8, 9, 10, 11, 12, 13, 20, 18]
+        COLUNAS = ["STATUS", "DATA", "FILIAL", "CLIENTE", "PEDIDO", "PRODUTO",
+                   "MOTORISTA", "PLACA", "DESTINO", "UF", "PESO",
+                   "FRT/E", "FRT/M", "ROTA", "AGENC.", "PAGAMENTO", "COLOCADOR", "", ""]
         self._tabela.setColumnCount(len(COLUNAS))
         self._tabela.setHorizontalHeaderLabels(COLUNAS)
 
-        larguras = [90, 70, 130, 120, 90, 120, 40, 60, 110, 90, 50, 50]
+        larguras = [110, 82, 55, 110, 60, 130, 100, 75, 100, 35, 50,
+                    55, 55, 80, 70, 90, 80, 46, 46]
         for i, w in enumerate(larguras):
             self._tabela.setColumnWidth(i, w)
         self._tabela.horizontalHeader().setStretchLastSection(False)
@@ -1605,6 +1601,12 @@ class BaseWidget(QWidget):
                 bg = QColor(COR_PAGO)
             elif "MARCADO" in status:
                 bg = QColor(COR_MARC)
+            elif "AGUARDANDO" in status:
+                bg = QColor("#1e2200")
+            elif "DESCARGA" in status:
+                bg = QColor("#1a0a2a")
+            elif "CHEGA" in status or "CAMINHO" in status:
+                bg = QColor("#0a1a2a")
             else:
                 bg = None
 
@@ -1616,8 +1618,8 @@ class BaseWidget(QWidget):
                     item.setBackground(bg)
                 self._tabela.setItem(r, col_tabela, item)
 
-            self._tabela.setItem(r, 10, self._make_btn_item("EDIT", "#e3b341"))
-            self._tabela.setItem(r, 11, self._make_btn_item("DEL",  "#da3633"))
+            self._tabela.setItem(r, 12, self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(r, 13, self._make_btn_item("DEL",  "#da3633"))
 
         self._tabela.setSortingEnabled(True)
         try:
@@ -1639,58 +1641,44 @@ class BaseWidget(QWidget):
     def _on_item_click(self, item):
         col = item.column()
         row = item.row()
-        if col == 10:
-            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(10)]
-            self._toggle_edicao(row, dados)
-        elif col == 11:
-            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(9)]
-            self._deletar_linha(row, dados)
+        txt = item.text() if item else ""
+        if col == 17:
+            if txt == "OK":
+                self._salvar_edicao(row)
+            else:  # EDIT
+                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(17)]
+                self._toggle_edicao(row, dados)
+        elif col == 18:
+            if txt == "✕":  # cancelar edição
+                self._linhas_editando.pop(row, None)
+                self._carregar()
+            else:  # DEL
+                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(17)]
+                self._deletar_linha(row, dados)
 
     def _toggle_edicao(self, row, dados_orig):
         if row in self._linhas_editando:
-            self._salvar_edicao(row, dados_orig)
+            self._salvar_edicao(row)
             return
 
         self._linhas_editando[row] = dados_orig
         self._tabela.setRowHeight(row, 36)
 
-        STATUS_OPTS = ["MARCADO", "CHEGA", "CARREGADO", "AGUARDANDO", "DESCARGA"]
+        STATUS_OPTS = ["AGUARDANDO", "MARCADO", "CHEGA", "A CAMINHO",
+                       "CARREGADO", "DESCARGA", "PAGO"]
 
-        # Edita colunas 0-7 (DATA até PESO), STATUS fica como combo na col 8
-        for c in range(8):
-            val = str(dados_orig[c]) if c < len(dados_orig) else ""
-            inp = QLineEdit(val)
-            inp.setAlignment(Qt.AlignCenter)
-            inp.setFrame(False)
-            inp.setStyleSheet(f"""
-                QLineEdit {{
-                    background: #0d1117;
-                    border: none;
-                    border-bottom: 2px solid {ACCENT};
-                    color: {TEXT};
-                    font-size: 11px;
-                    padding: 0px 2px;
-                }}
-            """)
-            # Força maiúsculo ao digitar (exceto coluna de data)
-            if c != 0:
-                inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
-            self._tabela.setCellWidget(row, c, inp)
-
-        combo = QComboBox()
-        combo.addItems(STATUS_OPTS)
-        status_atual = str(dados_orig[8]) if len(dados_orig) > 8 else ""
-        idx = combo.findText(status_atual, Qt.MatchFixedString)
-        if idx >= 0:
-            combo.setCurrentIndex(idx)
-        combo.setStyleSheet(f"""
-            QComboBox {{
-                background: #0d1117;
-                border: none;
+        INP_SS = f"""
+            QLineEdit {{
+                background: #0d1117; border: none;
                 border-bottom: 2px solid {ACCENT};
-                color: {TEXT};
-                font-size: 11px;
-                padding: 0px 2px;
+                color: {TEXT}; font-size: 11px; padding: 0px 4px;
+            }}
+        """
+        COMBO_SS = f"""
+            QComboBox {{
+                background: #0d1117; border: none;
+                border-bottom: 2px solid {ACCENT};
+                color: {TEXT}; font-size: 11px; padding: 0px 2px;
             }}
             QComboBox::drop-down {{ border: none; width: 16px; }}
             QComboBox::down-arrow {{
@@ -1699,90 +1687,128 @@ class BaseWidget(QWidget):
                 border-top: 4px solid {MUTED};
                 width: 0; height: 0; margin-right: 4px;
             }}
-        """)
-        self._tabela.setCellWidget(row, 8, combo)
+            QComboBox QAbstractItemView {{
+                background: {SURFACE}; border: 1px solid {BORDER2};
+                color: {TEXT}; selection-background-color: {ACCENT}33;
+            }}
+        """
 
-        self._tabela.setItem(row, 9, self._make_btn_item("OK", "#2ea043"))
+        # col 0=STATUS(combo), resto QLineEdit
+        # STATUS(0) DATA(1) FILIAL(2) CLIENTE(3) PEDIDO(4) PRODUTO(5)
+        # MOTORISTA(6) PLACA(7) DESTINO(8) UF(9) PESO(10)
+        # FRT/E(11) FRT/M(12) ROTA(13) AGENC.(14) PAGAMENTO(15) COLOCADOR(16)
+        for c in range(17):
+            val = self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""
+            if c == 0:  # STATUS — combo
+                combo = QComboBox()
+                combo.addItems(STATUS_OPTS)
+                combo.setStyleSheet(COMBO_SS)
+                idx = combo.findText(val, Qt.MatchFixedString)
+                combo.setCurrentIndex(idx if idx >= 0 else 0)
+                self._tabela.setCellWidget(row, c, combo)
+            else:
+                inp = QLineEdit(val)
+                inp.setAlignment(Qt.AlignCenter)
+                inp.setFrame(False)
+                inp.setStyleSheet(INP_SS)
+                if c != 1:  # não força maiúsculo na data (col 1)
+                    inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
+                self._tabela.setCellWidget(row, c, inp)
 
-    def _salvar_edicao(self, row, dados_orig):
-        novos_visiveis = []
-        for c in range(9):
+        # Botão OK na coluna 17, ✕ na 18
+        self._tabela.setItem(row, 17, self._make_btn_item("OK",  "#2ea043"))
+        self._tabela.setItem(row, 18, self._make_btn_item("✕", "#da3633"))
+
+    def _salvar_edicao(self, row):
+        import datetime as _dt
+
+        sb_id = self._row_to_linha_planilha.get(row)
+        if not sb_id:
+            QMessageBox.warning(self, "Aviso", "ID do registro não encontrado no banco.")
+            return
+
+        # Coleta valores de todos os widgets editáveis
+        # STATUS(0) DATA(1) FILIAL(2) CLIENTE(3) PEDIDO(4) PRODUTO(5)
+        # MOTORISTA(6) PLACA(7) DESTINO(8) UF(9) PESO(10)
+        # FRT/E(11) FRT/M(12) ROTA(13) AGENC.(14) PAGAMENTO(15) COLOCADOR(16)
+        vals = {}
+        for c in range(17):
             w = self._tabela.cellWidget(row, c)
-            novos_visiveis.append(w.text() if isinstance(w, QLineEdit) else (self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""))
-        combo = self._tabela.cellWidget(row, 8)
-        novos_visiveis[-1] = combo.currentText() if isinstance(combo, QComboBox) else novos_visiveis[-1]
+            if isinstance(w, QComboBox):
+                vals[c] = w.currentText()
+            elif isinstance(w, QLineEdit):
+                vals[c] = w.text().strip()
+            else:
+                item = self._tabela.item(row, c)
+                vals[c] = item.text() if item else ""
 
-        # Mapeamento: índice visível → índice real na planilha
-        # visível: [0=DATA, 1=FILIAL, 2=PAGADOR, 3=MOTORISTA, 4=PLACA,
-        #           5=DESTINO, 6=UF, 7=PESO, 8=STATUS, 9=COLOCADOR]
-        # planilha: [0=DATA,1=FILIAL,2=PAGADOR,3=AGENCIA,4=MOTORISTA,
-        #            5=PLACA,6=FABRICA,7=DESTINO,8=UF,9=PESO,
-        #            10=FRETE/E,11=FRETE/M,12=ROTA,13=AGENCIAMENTO,
-        #            14=STATUS,15=PEDIDO,16=PRODUTO,17=EMBALAGEM,18=COLOCADOR]
-        VISIVEL_PARA_PLANILHA = {0: 0, 1: 1, 2: 2, 3: 4, 4: 5,
-                                  5: 7, 6: 8, 7: 9, 8: 14, 9: 18}
+        STATUS_OPTS_COR = {
+            "CARREGADO": "#1a3a1a", "PAGO": "#1a2a3a",
+            "MARCADO": "#3a2a00",   "CHEGA": "#0a1a2a",
+            "AGUARDANDO": "#1e2200","DESCARGA": "#1a0a2a",
+            "A CAMINHO": "#0a1a2a",
+        }
 
         try:
-            sb_id = self._row_to_linha_planilha.get(row)
-            if not sb_id:
-                QMessageBox.warning(self, "Aviso", "ID do registro não encontrado.")
-                return
-
-            # Monta campos para PATCH no Supabase
-            import datetime as _dt
-            def _parse_data_br(v):
-                try:
-                    return _dt.datetime.strptime(str(v).strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
-                except Exception:
-                    return None
-
             campos = {
-                "filial":    novos_visiveis[1].upper(),
-                "pagador":   novos_visiveis[2].upper(),
-                "motorista": novos_visiveis[3].upper(),
-                "placa":     novos_visiveis[4].upper(),
-                "destino":   novos_visiveis[5].upper(),
-                "uf":        novos_visiveis[6].upper(),
-                "status":    novos_visiveis[8].upper(),
-                "colocador": novos_visiveis[9].upper() if len(novos_visiveis) > 9 else "",
+                "status":       vals[0].upper(),
+                "filial":       vals[2].upper(),
+                "pagador":      vals[3].upper(),
+                "pedido":       vals[4].upper(),
+                "produto":      vals[5].upper(),
+                "motorista":    vals[6].upper(),
+                "placa":        vals[7].upper(),
+                "destino":      vals[8].upper(),
+                "uf":           vals[9].upper(),
+                "rota":         vals[13].upper(),
+                "agenciamento": vals[14].upper(),
+                "pagamento":    vals[15].upper(),
+                "colocador":    vals[16].upper(),
             }
-            data_val = _parse_data_br(novos_visiveis[0])
-            if data_val:
-                campos["data"] = data_val
+            # Data: converte DD/MM/AAAA → AAAA-MM-DD
             try:
-                campos["peso"] = float(str(novos_visiveis[7]).replace(",","."))
+                campos["data"] = _dt.datetime.strptime(
+                    vals[1].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+            except Exception:
+                pass
+            # Peso: float
+            try:
+                campos["peso"]      = float(vals[10].replace(",", "."))
+            except Exception:
+                pass
+            try:
+                campos["frete_emp"] = float(vals[11].replace(",", "."))
+            except Exception:
+                pass
+            try:
+                campos["frete_mot"] = float(vals[12].replace(",", "."))
             except Exception:
                 pass
             campos = {k: v for k, v in campos.items() if v not in ("", None)}
+
             _atualizar_supabase_linha(sb_id, campos)
 
-            STATUS_OPTS_COR = {
-                "CARREGADO": "#1a3a1a", "NÃO CARREGADO": "#3a1a1a",
-                "PAGO": "#1a2a3a", "MARCADO": "#3a2a00",
-                "CHEGA": "#1a2a3a", "AGUARDANDO": "#2a2a00",
-                "DESCARGA": "#2a1a3a",
-            }
-            status = novos_visiveis[8].upper()
-            bg = QColor(STATUS_OPTS_COR.get(status, "#161b22"))
+            status  = campos.get("status", "")
+            bg_cor  = STATUS_OPTS_COR.get(status, "#161b22")
+            bg      = QColor(bg_cor)
+            novos   = [vals[c] for c in range(17)]
 
-            for c in range(9):
+            for c in range(17):
                 self._tabela.removeCellWidget(row, c)
-                item = QTableWidgetItem(novos_visiveis[c] if c < len(novos_visiveis) else "")
+                item = QTableWidgetItem(novos[c])
                 item.setTextAlignment(Qt.AlignCenter)
                 item.setBackground(bg)
                 self._tabela.setItem(row, c, item)
 
-            self._tabela.setItem(row, 9,  self._make_btn_item("EDIT", "#e3b341"))
-            self._tabela.setItem(row, 10, self._make_btn_item("DEL",  "#da3633"))
-
+            self._tabela.setItem(row, 17, self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(row, 18, self._make_btn_item("DEL",  "#da3633"))
             self._linhas_editando.pop(row, None)
             self._tabela.setRowHeight(row, 28)
-            self._lbl_status.setText("Linha atualizada com sucesso.")
+            self._lbl_status.setText("Registro atualizado no banco de dados.")
         except Exception as e:
-            QMessageBox.critical(self, "Erro", str(e))
+            QMessageBox.critical(self, "Erro ao salvar", str(e))
 
     def _deletar_linha(self, row, dados):
-        conta = self._combo_conta.currentText()
         resp = QMessageBox.question(
             self, "Confirmar",
             "Deseja remover este registro do banco de dados?",
@@ -2449,9 +2475,8 @@ class UI(QWidget):
         self._nav_btns = []
         self._nav_btns.append(make_nav_btn("📋", "Gerar Ordem", 0))
         self._nav_btns.append(make_nav_btn("🕐", "Histórico", 1))
-        self._nav_btns.append(make_nav_btn("📦", "Controle de Pedidos", 2))
-        self._nav_btns.append(make_nav_btn("📊", "Controle de Ordens", 3))
-        self._nav_btns.append(make_nav_btn("⚙", "Configurações", 4))
+        self._nav_btns.append(make_nav_btn("📊", "Controle de Ordens", 2))
+        self._nav_btns.append(make_nav_btn("⚙", "Configurações", 3))
         self._nav_btns[0].setChecked(True)
 
         for b in self._nav_btns:
@@ -2467,8 +2492,7 @@ class UI(QWidget):
         self._stack.addWidget(self._build_pagina_ordem())
         self._historico_widget = HistoricoWidget()
         self._stack.addWidget(self._historico_widget)
-        self._planilha_widget = PlanilhaWidget()
-        self._stack.addWidget(self._planilha_widget)
+        self._planilha_widget = None  # removido
         self._base_widget = BaseWidget()
         self._stack.addWidget(self._base_widget)
         self._config_widget = ConfigWidget()
@@ -2483,11 +2507,9 @@ class UI(QWidget):
         if idx == 1:
             self._historico_widget.recarregar()
         if idx == 2:
-            self._planilha_widget._atualizar_contas()
-        if idx == 4:
-            self._config_widget._carregar()
-        if idx == 3:
             self._base_widget._atualizar_contas()
+        if idx == 3:
+            self._config_widget._carregar()
 
     def _build_pagina_ordem(self):
         pagina = QWidget()
@@ -2717,9 +2739,19 @@ class UI(QWidget):
         v.addLayout(r2)
 
         r3 = QHBoxLayout(); r3.setSpacing(6)
-        self.entradas["Pagamento"] = make_input()
-        r3.addWidget(make_field("Pagamento", self.entradas["Pagamento"]), 1)
-        r3.addStretch(2)
+        self.entradas["Pagamento"]   = make_input()
+        self.entradas["Peso Total"]  = make_input()
+        self.entradas["Peso Total"].setReadOnly(True)
+        self.entradas["Peso Total"].setPlaceholderText("Auto")
+        self.entradas["Peso Total"].setStyleSheet(f"""
+            QLineEdit {{
+                background: #1c2128; border: 1px solid {BORDER2};
+                border-radius: 6px; padding: 6px 10px;
+                color: {ACCENT}; font-size: 12px; font-weight: 700;
+            }}
+        """)
+        r3.addWidget(make_field("Pagamento",  self.entradas["Pagamento"]),  2)
+        r3.addWidget(make_field("Peso Total", self.entradas["Peso Total"]), 1)
         v.addLayout(r3)
 
         v.addStretch()
@@ -2772,6 +2804,22 @@ class UI(QWidget):
         self.btn3.clicked.connect(self.nova_ordem)
 
         return v
+
+    def _atualizar_peso_total(self):
+        """Soma todos os campos Peso ativos e atualiza o campo Peso Total."""
+        total = 0.0
+        for i in range(4):
+            sufixo = f" {i + 1}" if i > 0 else ""
+            chave  = f"Peso{sufixo}"
+            w = self.entradas.get(chave)
+            if w and isinstance(w, QLineEdit):
+                try:
+                    total += float(str(w.text()).replace(",", "."))
+                except Exception:
+                    pass
+        w_total = self.entradas.get("Peso Total")
+        if w_total:
+            w_total.setText(str(int(total)) if total == int(total) else f"{total:.1f}")
 
     def _adicionar_linha_pedido(self, ativa=True):
         MAX = 4
@@ -2831,6 +2879,8 @@ class UI(QWidget):
                 inp.setStyleSheet("QLineEdit { padding: 2px 6px; font-size: 12px; }")
                 inp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
+                if chave == "Peso":
+                    inp.textChanged.connect(lambda _: self._atualizar_peso_total())
             inp_lay.addWidget(inp, stretch)
             nome = chave + sufixo
             linha[nome] = inp
@@ -2992,10 +3042,7 @@ class UI(QWidget):
                 if "Assinatura" in self.entradas:
                     self.entradas["Assinatura"].setText(self.assinatura_usuario)
 
-            self.empresa = nome_empresa
-            cor = ACCENT if nome_empresa == "Agrovia" else DANGER
-            self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
-            self._atualizar_fundo(nome_empresa)
+            self._aplicar_empresa(nome_empresa)
             dlg.accept()
 
         btn_a.clicked.connect(lambda: sel("Agrovia"))
@@ -3110,10 +3157,23 @@ class UI(QWidget):
 
         # Injeta usuário logado nos dados para gravar no Supabase
         dados["_usuario"] = self.usuario_logado or ""
+        # Injeta supabase_id se for reedição (faz PATCH em vez de INSERT)
+        if hasattr(self, "_reeditando_supabase_id") and self._reeditando_supabase_id:
+            dados["_supabase_id"] = self._reeditando_supabase_id
+            del self._reeditando_supabase_id
         self._thread = GeradorThread(dados, pasta, email, conta_gmail)
         self._thread.sucesso.connect(self._on_sucesso)
         self._thread.erro.connect(self._on_erro)
         self._thread.start()
+
+    def _aplicar_empresa(self, nome_empresa):
+        """Define a empresa ativa programaticamente."""
+        self.empresa = nome_empresa
+        nome_empresa = "Agrovia" if "AGRO" in str(nome_empresa).upper() else "TopBrasil"
+        self.empresa = nome_empresa
+        cor = ACCENT if nome_empresa == "Agrovia" else DANGER
+        self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
+        self._atualizar_fundo(nome_empresa)
 
     def _dialog_escolher_conta(self):
         contas        = _listar_contas_gmail()
@@ -3340,11 +3400,9 @@ class UI(QWidget):
                     pass
             del self._arquivos_para_deletar
 
-        conta       = self._planilha_widget._combo_conta.currentText()
         supabase_id = self._thread.dados.get("_supabase_id_resultado")
         salvar_historico(
             self._thread.dados, caminho,
-            conta       = conta if conta != "(nenhuma conta)" else None,
             usuario     = self.usuario_logado,
             supabase_id = supabase_id,
         )
@@ -3561,9 +3619,9 @@ class UI(QWidget):
             empresa = dados.get("empresa", "")
             if empresa:
                 self.empresa = empresa
-                cor = ACCENT if empresa == "Agrovia" else DANGER
+                cor = ACCENT if "AGRO" in empresa.upper() else DANGER
                 self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
-                self._atualizar_fundo(empresa)
+                self._atualizar_fundo("Agrovia" if "AGRO" in empresa.upper() else "TopBrasil")
             else:
                 self.escolher_empresa()
 
@@ -3586,7 +3644,7 @@ class UI(QWidget):
         campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
                           "Destino", "Motorista", "Cavalo", "Pagador",
                           "Solicitante", "Agência", "UF", "Frete/Emp", "Frete/Mot",
-                          "Rota", "Agenciamento", "Colocador", "Pagamento"]
+                          "Rota", "Agenciamento", "Colocador", "Pagamento", "Peso Total"]
         for campo in campos_simples:
             valor = dados.get(campo, "")
             if not valor:
@@ -3620,6 +3678,8 @@ class UI(QWidget):
 
         emp = dados.get("empresa")
         if emp:
+            self.empresa = emp
+            emp = "Agrovia" if "AGRO" in emp.upper() else "TopBrasil"
             self.empresa = emp
             cor = ACCENT if emp == "Agrovia" else DANGER
             self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
