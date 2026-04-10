@@ -522,9 +522,11 @@ class HistoricoWidget(QWidget):
         h.setContentsMargins(14, 10, 14, 10)
         h.setSpacing(12)
 
-        hora = r.get("data_hora", "")[-5:]
-        lbl_hora = QLabel(hora)
-        lbl_hora.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent; min-width: 40px;")
+        hora      = r.get("data_hora", "")[-5:]
+        num_ordem = r.get("supabase_id", "")
+        hora_label = f"#{num_ordem}  {hora}" if num_ordem else hora
+        lbl_hora = QLabel(hora_label)
+        lbl_hora.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent; min-width: 60px;")
 
         info = QVBoxLayout()
         info.setSpacing(2)
@@ -1506,14 +1508,15 @@ class BaseWidget(QWidget):
         # MOTORISTA(4) PLACA(5) DESTINO(7) UF(8) PESO(9)
         # FRETE/E(10) FRETE/M(11) ROTA(12) AGENCIAMENTO(13) PAGAMENTO(20*) COLOCADOR(18)
         # *PAGAMENTO não está na lista atual — adicionamos no índice 20 via _carregar_base_supabase
-        self._colunas_visiveis = [14, 0, 1, 2, 15, 16, 4, 5, 7, 8, 9, 10, 11, 12, 13, 20, 18]
-        COLUNAS = ["STATUS", "DATA", "FILIAL", "CLIENTE", "PEDIDO", "PRODUTO",
+        # índice 19 = ID Supabase (usado como número de ordem)
+        self._colunas_visiveis = [19, 14, 0, 1, 2, 15, 16, 4, 5, 7, 8, 9, 10, 11, 12, 13, 20, 18]
+        COLUNAS = ["#", "STATUS", "DATA", "FILIAL", "CLIENTE", "PEDIDO", "PRODUTO",
                    "MOTORISTA", "PLACA", "DESTINO", "UF", "PESO",
                    "FRT/E", "FRT/M", "ROTA", "AGENC.", "PAGAMENTO", "COLOCADOR", "", ""]
         self._tabela.setColumnCount(len(COLUNAS))
         self._tabela.setHorizontalHeaderLabels(COLUNAS)
 
-        larguras = [110, 82, 55, 110, 60, 130, 100, 75, 100, 35, 50,
+        larguras = [40, 110, 82, 55, 110, 60, 130, 100, 75, 100, 35, 50,
                     55, 55, 80, 70, 90, 80, 46, 46]
         for i, w in enumerate(larguras):
             self._tabela.setColumnWidth(i, w)
@@ -1618,8 +1621,8 @@ class BaseWidget(QWidget):
                     item.setBackground(bg)
                 self._tabela.setItem(r, col_tabela, item)
 
-            self._tabela.setItem(r, 12, self._make_btn_item("EDIT", "#e3b341"))
-            self._tabela.setItem(r, 13, self._make_btn_item("DEL",  "#da3633"))
+            self._tabela.setItem(r, 18, self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(r, 19, self._make_btn_item("DEL",  "#da3633"))
 
         self._tabela.setSortingEnabled(True)
         try:
@@ -1642,18 +1645,18 @@ class BaseWidget(QWidget):
         col = item.column()
         row = item.row()
         txt = item.text() if item else ""
-        if col == 17:
+        if col == 18:
             if txt == "OK":
                 self._salvar_edicao(row)
             else:  # EDIT
-                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(17)]
+                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(18)]
                 self._toggle_edicao(row, dados)
-        elif col == 18:
+        elif col == 19:
             if txt == "✕":  # cancelar edição
                 self._linhas_editando.pop(row, None)
                 self._carregar()
             else:  # DEL
-                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(17)]
+                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(18)]
                 self._deletar_linha(row, dados)
 
     def _toggle_edicao(self, row, dados_orig):
@@ -1693,13 +1696,19 @@ class BaseWidget(QWidget):
             }}
         """
 
-        # col 0=STATUS(combo), resto QLineEdit
-        # STATUS(0) DATA(1) FILIAL(2) CLIENTE(3) PEDIDO(4) PRODUTO(5)
-        # MOTORISTA(6) PLACA(7) DESTINO(8) UF(9) PESO(10)
-        # FRT/E(11) FRT/M(12) ROTA(13) AGENC.(14) PAGAMENTO(15) COLOCADOR(16)
-        for c in range(17):
+        # col 0=# (não editável), col 1=STATUS(combo), cols 2-17=QLineEdit
+        # #(0) STATUS(1) DATA(2) FILIAL(3) CLIENTE(4) PEDIDO(5) PRODUTO(6)
+        # MOTORISTA(7) PLACA(8) DESTINO(9) UF(10) PESO(11)
+        # FRT/E(12) FRT/M(13) ROTA(14) AGENC.(15) PAGAMENTO(16) COLOCADOR(17)
+        for c in range(18):
             val = self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""
-            if c == 0:  # STATUS — combo
+            if c == 0:  # # — não editável, mostra só o número
+                lbl = QLabel(val)
+                lbl.setAlignment(Qt.AlignCenter)
+                lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+                self._tabela.setCellWidget(row, c, lbl)
+                continue
+            if c == 1:  # STATUS — combo
                 combo = QComboBox()
                 combo.addItems(STATUS_OPTS)
                 combo.setStyleSheet(COMBO_SS)
@@ -1711,13 +1720,13 @@ class BaseWidget(QWidget):
                 inp.setAlignment(Qt.AlignCenter)
                 inp.setFrame(False)
                 inp.setStyleSheet(INP_SS)
-                if c != 1:  # não força maiúsculo na data (col 1)
+                if c != 2:  # não força maiúsculo na data (col 2)
                     inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
                 self._tabela.setCellWidget(row, c, inp)
 
-        # Botão OK na coluna 17, ✕ na 18
-        self._tabela.setItem(row, 17, self._make_btn_item("OK",  "#2ea043"))
-        self._tabela.setItem(row, 18, self._make_btn_item("✕", "#da3633"))
+        # Botão OK na coluna 18, ✕ na 19
+        self._tabela.setItem(row, 18, self._make_btn_item("OK",  "#2ea043"))
+        self._tabela.setItem(row, 19, self._make_btn_item("✕", "#da3633"))
 
     def _salvar_edicao(self, row):
         import datetime as _dt
@@ -1728,11 +1737,11 @@ class BaseWidget(QWidget):
             return
 
         # Coleta valores de todos os widgets editáveis
-        # STATUS(0) DATA(1) FILIAL(2) CLIENTE(3) PEDIDO(4) PRODUTO(5)
-        # MOTORISTA(6) PLACA(7) DESTINO(8) UF(9) PESO(10)
-        # FRT/E(11) FRT/M(12) ROTA(13) AGENC.(14) PAGAMENTO(15) COLOCADOR(16)
+        # #(0-skip) STATUS(1) DATA(2) FILIAL(3) CLIENTE(4) PEDIDO(5) PRODUTO(6)
+        # MOTORISTA(7) PLACA(8) DESTINO(9) UF(10) PESO(11)
+        # FRT/E(12) FRT/M(13) ROTA(14) AGENC.(15) PAGAMENTO(16) COLOCADOR(17)
         vals = {}
-        for c in range(17):
+        for c in range(18):
             w = self._tabela.cellWidget(row, c)
             if isinstance(w, QComboBox):
                 vals[c] = w.currentText()
@@ -1750,38 +1759,41 @@ class BaseWidget(QWidget):
         }
 
         try:
+            # #(0-skip) STATUS(1) DATA(2) FILIAL(3) CLIENTE(4) PEDIDO(5) PRODUTO(6)
+            # MOTORISTA(7) PLACA(8) DESTINO(9) UF(10) PESO(11)
+            # FRT/E(12) FRT/M(13) ROTA(14) AGENC.(15) PAGAMENTO(16) COLOCADOR(17)
             campos = {
-                "status":       vals[0].upper(),
-                "filial":       vals[2].upper(),
-                "pagador":      vals[3].upper(),
-                "pedido":       vals[4].upper(),
-                "produto":      vals[5].upper(),
-                "motorista":    vals[6].upper(),
-                "placa":        vals[7].upper(),
-                "destino":      vals[8].upper(),
-                "uf":           vals[9].upper(),
-                "rota":         vals[13].upper(),
-                "agenciamento": vals[14].upper(),
-                "pagamento":    vals[15].upper(),
-                "colocador":    vals[16].upper(),
+                "status":       vals[1].upper(),
+                "filial":       vals[3].upper(),
+                "pagador":      vals[4].upper(),
+                "pedido":       vals[5].upper(),
+                "produto":      vals[6].upper(),
+                "motorista":    vals[7].upper(),
+                "placa":        vals[8].upper(),
+                "destino":      vals[9].upper(),
+                "uf":           vals[10].upper(),
+                "rota":         vals[14].upper(),
+                "agenciamento": vals[15].upper(),
+                "pagamento":    vals[16].upper(),
+                "colocador":    vals[17].upper(),
             }
             # Data: converte DD/MM/AAAA → AAAA-MM-DD
             try:
                 campos["data"] = _dt.datetime.strptime(
-                    vals[1].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+                    vals[2].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
             except Exception:
                 pass
             # Peso: float
             try:
-                campos["peso"]      = float(vals[10].replace(",", "."))
+                campos["peso"]      = float(vals[11].replace(",", "."))
             except Exception:
                 pass
             try:
-                campos["frete_emp"] = float(vals[11].replace(",", "."))
+                campos["frete_emp"] = float(vals[12].replace(",", "."))
             except Exception:
                 pass
             try:
-                campos["frete_mot"] = float(vals[12].replace(",", "."))
+                campos["frete_mot"] = float(vals[13].replace(",", "."))
             except Exception:
                 pass
             campos = {k: v for k, v in campos.items() if v not in ("", None)}
@@ -1791,17 +1803,17 @@ class BaseWidget(QWidget):
             status  = campos.get("status", "")
             bg_cor  = STATUS_OPTS_COR.get(status, "#161b22")
             bg      = QColor(bg_cor)
-            novos   = [vals[c] for c in range(17)]
+            novos   = [vals.get(c, "") for c in range(18)]
 
-            for c in range(17):
+            for c in range(18):
                 self._tabela.removeCellWidget(row, c)
-                item = QTableWidgetItem(novos[c])
+                item = QTableWidgetItem(str(novos[c]))
                 item.setTextAlignment(Qt.AlignCenter)
                 item.setBackground(bg)
                 self._tabela.setItem(row, c, item)
 
-            self._tabela.setItem(row, 17, self._make_btn_item("EDIT", "#e3b341"))
-            self._tabela.setItem(row, 18, self._make_btn_item("DEL",  "#da3633"))
+            self._tabela.setItem(row, 18, self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(row, 19, self._make_btn_item("DEL",  "#da3633"))
             self._linhas_editando.pop(row, None)
             self._tabela.setRowHeight(row, 28)
             self._lbl_status.setText("Registro atualizado no banco de dados.")
