@@ -561,7 +561,13 @@ class HistoricoWidget(QWidget):
             empresa = "Agrovia" if "AGRO" in filial else "TopBrasil"
             criado  = str(r.get("criado_em", "") or "")
             if len(criado) >= 16:
-                data_hora = criado[8:10]+"/"+criado[5:7]+"/"+criado[:4]+" "+criado[11:16]
+                try:
+                    import datetime as _dt
+                    dt_utc = _dt.datetime.strptime(criado[:19], "%Y-%m-%d %H:%M:%S")
+                    dt_brt = dt_utc - _dt.timedelta(hours=3)
+                    data_hora = dt_brt.strftime("%d/%m/%Y %H:%M")
+                except Exception:
+                    data_hora = criado[8:10]+"/"+criado[5:7]+"/"+criado[:4]+" "+criado[11:16]
             else:
                 data_hora = str(r.get("data", "") or "")
             status  = str(r.get("status", "") or "").upper()
