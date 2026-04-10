@@ -398,6 +398,7 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         "Carreta 3":     "I36",
         "Data Geração":  "F39",
         "Assinatura":    "K39",
+        "Numero Ordem":  "D39",
     }
 
     LINHAS_PEDIDO = [
@@ -410,6 +411,20 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     dados["CPF"] = formatar_cpf(dados.get("CPF", ""))
     dados["Contato"] = formatar_telefone(dados.get("Contato", ""))
     dados["Data Geração"] = time.strftime("%d/%m/%Y")
+
+    # Grava no Supabase ANTES de gerar o PDF para ter o número da ordem
+    usuario     = dados.get("_usuario", "")
+    supabase_id = dados.get("_supabase_id")
+    if supabase_id:
+        atualizar_supabase(supabase_id, dados, usuario=usuario)
+        _ordem_id = supabase_id
+    else:
+        _ordem_id = gravar_supabase(dados, usuario=usuario)
+    dados["_supabase_id_resultado"] = _ordem_id
+
+    # Define número da ordem para imprimir no PDF
+    if _ordem_id:
+        dados["Numero Ordem"] = f"ORDEM #{_ordem_id}"
 
     for chave in list(dados.keys()):
         if not chave.startswith("_"):
@@ -584,15 +599,5 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         assunto      = dados.get("_email_assunto")      or montar_email(dados)[0]
         corpo        = dados.get("_email_corpo")        or montar_email(dados)[1]
         enviar_email_gmail(conta_gmail, destinatario, assunto, corpo, pdf_path)
-
-    # Grava ou atualiza no Supabase (silencioso — não bloqueia em caso de erro)
-    usuario     = dados.get("_usuario", "")
-    supabase_id = dados.get("_supabase_id")
-    if supabase_id:
-        atualizar_supabase(supabase_id, dados, usuario=usuario)
-        dados["_supabase_id_resultado"] = supabase_id
-    else:
-        novo_id = gravar_supabase(dados, usuario=usuario)
-        dados["_supabase_id_resultado"] = novo_id
 
     return caminho

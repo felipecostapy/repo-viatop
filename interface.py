@@ -385,6 +385,25 @@ def carregar_historico():
     except Exception:
         return []
 
+def carregar_historico_supabase(limite=200):
+    """Carrega histórico de ordens direto do Supabase, ordenado do mais recente."""
+    try:
+        req = __import__("urllib.request", fromlist=["Request"]).Request(
+            f"{SUPABASE_URL}/rest/v1/carregamentos"
+            f"?select=id,criado_em,data,filial,pagador,motorista,placa,fabrica,"
+            f"destino,uf,peso,status,pedido,produto,colocador,usuario,ativo,observacao"
+            f"&order=id.desc&limit={limite}",
+            headers={
+                "apikey":        SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            }
+        )
+        import urllib.request as _ureq
+        with _ureq.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception:
+        return []
+
 USUARIOS = {
     "FELIPE":   "Felipe Costa",
     "MARCOS":   "Marcos Silva",
@@ -438,155 +457,251 @@ class HistoricoWidget(QWidget):
         self.setStyleSheet("background: transparent;")
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 16)
-        root.setSpacing(12)
+        root.setSpacing(10)
 
+        # ── Topo ──
         topo = QHBoxLayout()
         titulo = QLabel("HISTÓRICO DE ORDENS")
         titulo.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px; background: transparent;")
+
+        self._inp_busca = QLineEdit()
+        self._inp_busca.setPlaceholderText("Buscar motorista, placa, pedido, cliente...")
+        self._inp_busca.setFixedWidth(280)
+        self._inp_busca.setStyleSheet(f"""
+            QLineEdit {{
+                background: {SURFACE}; border: 1px solid {BORDER2};
+                border-radius: 6px; padding: 6px 10px; color: {TEXT}; font-size: 12px;
+            }}
+            QLineEdit:focus {{ border-color: {ACCENT}; }}
+        """)
+        self._inp_busca.textChanged.connect(self._filtrar)
+
         btn_atualizar = QPushButton("↺  ATUALIZAR")
         btn_atualizar.setStyleSheet(f"""
             QPushButton {{
-                background: transparent;
-                border: 1px solid {BORDER2};
-                border-radius: 6px;
-                color: {MUTED};
-                padding: 6px 12px;
-                font-size: 12px;
+                background: transparent; border: 1px solid {BORDER2};
+                border-radius: 6px; color: {MUTED}; padding: 6px 12px; font-size: 12px;
             }}
             QPushButton:hover {{ color: {TEXT}; border-color: {ACCENT}; }}
         """)
         btn_atualizar.clicked.connect(self.recarregar)
         topo.addWidget(titulo)
         topo.addStretch()
+        topo.addWidget(self._inp_busca)
         topo.addWidget(btn_atualizar)
         root.addLayout(topo)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        # ── Tabela ──
+        self._tabela = QTableWidget()
+        self._tabela.setStyleSheet(f"""
+            QTableWidget {{
+                background: {SURFACE}; border: 1px solid {BORDER};
+                border-radius: 8px; gridline-color: {BORDER};
+                color: {TEXT}; font-size: 11px;
+            }}
+            QTableWidget::item {{ padding: 6px 10px; }}
+            QTableWidget::item:selected {{ background: {ACCENT}22; color: {TEXT}; }}
+            QHeaderView::section {{
+                background: #1c2128; color: {MUTED}; font-size: 10px;
+                font-weight: 700; padding: 8px 10px; border: none;
+                border-bottom: 1px solid {BORDER}; border-right: 1px solid {BORDER};
+            }}
+            QScrollBar:vertical {{ background: {SURFACE}; width: 8px; }}
+            QScrollBar::handle:vertical {{ background: {BORDER2}; border-radius: 4px; }}
+        """)
+        self._tabela.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._tabela.setSelectionBehavior(QTableWidget.SelectRows)
+        self._tabela.setAlternatingRowColors(False)
+        self._tabela.verticalHeader().setVisible(False)
+        self._tabela.horizontalHeader().setStretchLastSection(True)
+        self._tabela.setSortingEnabled(True)
 
-        self._container = QWidget()
-        self._container.setStyleSheet("background: transparent;")
-        self._vbox = QVBoxLayout(self._container)
-        self._vbox.setSpacing(8)
-        self._vbox.setContentsMargins(0, 0, 0, 0)
-        self._vbox.addStretch()
+        COLUNAS = ["#", "DATA/HORA", "EMPRESA", "MOTORISTA", "PLACA",
+                   "CLIENTE", "PEDIDO", "PRODUTO", "PESO", "DESTINO",
+                   "COLOCADOR", "STATUS", "USUÁRIO", "EDITAR"]
+        self._tabela.setColumnCount(len(COLUNAS))
+        self._tabela.setHorizontalHeaderLabels(COLUNAS)
+        larguras = [45, 115, 75, 140, 80, 130, 70, 150, 55, 110, 90, 100, 70, 60]
+        for i, w in enumerate(larguras):
+            self._tabela.setColumnWidth(i, w)
+        self._tabela.horizontalHeader().setStretchLastSection(False)
 
-        scroll.setWidget(self._container)
-        root.addWidget(scroll)
-
+        root.addWidget(self._tabela)
+        self._todos = []
         self.recarregar()
 
     def recarregar(self):
-        while self._vbox.count() > 1:
-            item = self._vbox.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        self._tabela.setSortingEnabled(False)
+        self._tabela.setRowCount(0)
+        # Tenta Supabase primeiro, fallback para JSON local
+        registros = carregar_historico_supabase()
+        if registros:
+            self._todos = registros
+            self._renderizar_supabase(registros)
+        else:
+            local = carregar_historico()
+            self._todos = local
+            self._renderizar_local(local)
+        self._tabela.setSortingEnabled(True)
 
-        registros = carregar_historico()
-
-        if not registros:
-            vazio = QLabel("Nenhuma ordem gerada ainda.")
-            vazio.setAlignment(Qt.AlignCenter)
-            vazio.setStyleSheet(f"color: {MUTED}; font-size: 13px; background: transparent;")
-            self._vbox.insertWidget(0, vazio)
-            return
-
-        grupos = {}
+    def _renderizar_supabase(self, registros):
+        STATUS_COR = {
+            "CARREGADO": "#1a3a1a", "PAGO": "#1a2a3a", "MARCADO": "#3a2a00",
+            "AGUARDANDO": "#1e2200", "DESCARGA": "#1a0a2a",
+            "CHEGA": "#0a1a2a", "A CAMINHO": "#0a1a2a",
+            "DESISTIU": "#3a0a0a", "ALTERADO": "#3a0a0a",
+        }
         for r in registros:
-            data = r.get("data_hora", "")[:10]
-            grupos.setdefault(data, []).append(r)
+            row = self._tabela.rowCount()
+            self._tabela.insertRow(row)
+            self._tabela.setRowHeight(row, 26)
 
-        for i, (data, items) in enumerate(grupos.items()):
-            lbl_data = QLabel(data)
-            lbl_data.setStyleSheet(f"color: {MUTED}; font-size: 11px; font-weight: 700; letter-spacing: 1px; background: transparent; padding-top: 4px;")
-            self._vbox.insertWidget(self._vbox.count() - 1, lbl_data)
+            sb_id   = r.get("id", "")
+            filial  = str(r.get("filial", "") or "").upper()
+            empresa = "Agrovia" if "AGRO" in filial else "TopBrasil"
+            criado  = str(r.get("criado_em", "") or "")
+            if len(criado) >= 16:
+                data_hora = criado[8:10]+"/"+criado[5:7]+"/"+criado[:4]+" "+criado[11:16]
+            else:
+                data_hora = str(r.get("data", "") or "")
+            status  = str(r.get("status", "") or "").upper()
+            ativo   = r.get("ativo", True)
+            inativo = (not ativo) or status in ("DESISTIU", "ALTERADO")
+            obs     = str(r.get("observacao", "") or "")
+            peso    = r.get("peso", "")
+            try: peso = f"{float(peso):.0f} t"
+            except: peso = str(peso)
 
-            for r in items:
-                card = self._make_card(r)
-                self._vbox.insertWidget(self._vbox.count() - 1, card)
+            cor_emp = ACCENT if empresa == "Agrovia" else DANGER
+            bg = QColor(STATUS_COR.get(status, "#161b22"))
+            fg = QColor("#f85149") if inativo else QColor(TEXT)
 
-    def _make_card(self, r):
-        empresa = r.get("empresa", "")
-        cor_borda = ACCENT if empresa == "Agrovia" else DANGER if empresa == "TopBrasil" else BORDER
-        frame = QFrame()
-        frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {SURFACE};
-                border: 1px solid {cor_borda};
-                border-radius: 8px;
-            }}
-        """)
-        h = QHBoxLayout(frame)
-        h.setContentsMargins(14, 10, 14, 10)
-        h.setSpacing(12)
+            vals = [
+                str(sb_id), data_hora, empresa,
+                str(r.get("motorista","") or "").title(),
+                str(r.get("placa","") or ""),
+                str(r.get("pagador","") or ""),
+                str(r.get("pedido","") or ""),
+                str(r.get("produto","") or ""),
+                peso,
+                str(r.get("destino","") or ""),
+                str(r.get("colocador","") or ""),
+                status + (f" → {obs}" if obs and inativo else ""),
+                str(r.get("usuario","") or ""),
+                "EDITAR",
+            ]
 
-        hora      = r.get("data_hora", "")[-5:]
-        num_ordem = r.get("supabase_id", "")
-        hora_label = f"#{num_ordem}  {hora}" if num_ordem else hora
-        lbl_hora = QLabel(hora_label)
-        lbl_hora.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent; min-width: 60px;")
+            for col, val in enumerate(vals):
+                item = QTableWidgetItem(val)
+                item.setTextAlignment(Qt.AlignCenter if col != 3 else Qt.AlignLeft | Qt.AlignVCenter)
+                item.setBackground(bg)
+                item.setForeground(fg)
+                if col == 2:  # empresa
+                    item.setForeground(QColor(cor_emp))
+                if col == 13:  # EDITAR
+                    item.setForeground(QColor("#e3b341"))
+                    item.setFont(QFont("Segoe UI", 8, QFont.Bold))
+                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                self._tabela.setItem(row, col, item)
 
-        info = QVBoxLayout()
-        info.setSpacing(2)
-        motorista = QLabel(r.get("motorista", "—").title())
-        motorista.setStyleSheet(f"color: {TEXT}; font-size: 13px; font-weight: 600; background: transparent;")
-        placa = QLabel(r.get("placa", "—"))
-        placa.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
-        info.addWidget(motorista)
-        info.addWidget(placa)
+            # Guarda dados completos para edição
+            self._tabela.item(row, 0).setData(Qt.UserRole, r)
 
-        empresa = r.get("empresa", "")
-        badge = QLabel(empresa.upper() if empresa else "—")
-        cor_badge = ACCENT if empresa == "Agrovia" else DANGER if empresa == "TopBrasil" else MUTED
-        badge.setStyleSheet(f"""
-            color: {cor_badge};
-            background: {cor_badge}18;
-            border: 1px solid {cor_badge}44;
-            border-radius: 4px;
-            font-size: 10px;
-            font-weight: 700;
-            padding: 2px 7px;
-            letter-spacing: 0.5px;
-        """)
+        try:
+            self._tabela.itemClicked.disconnect()
+        except Exception:
+            pass
+        self._tabela.itemClicked.connect(self._on_click)
 
-        arquivo = r.get("arquivo", "")
-        arquivo_xlsx = arquivo if arquivo.endswith(".xlsx") else arquivo.replace(".pdf", ".xlsx")
+    def _renderizar_local(self, registros):
+        for r in registros:
+            row = self._tabela.rowCount()
+            self._tabela.insertRow(row)
+            self._tabela.setRowHeight(row, 26)
+            empresa = r.get("empresa", "")
+            cor_emp = ACCENT if empresa == "Agrovia" else DANGER
+            dados   = r.get("dados", {})
+            vals = [
+                str(r.get("supabase_id","") or ""),
+                r.get("data_hora",""),
+                empresa,
+                r.get("motorista","—").title(),
+                r.get("placa","—"),
+                dados.get("Cliente","") or dados.get("Pagador",""),
+                dados.get("Pedido",""),
+                dados.get("Produto",""),
+                dados.get("Peso Total","") or dados.get("Peso",""),
+                dados.get("Destino",""),
+                dados.get("Colocador",""),
+                "",
+                r.get("usuario",""),
+                "EDITAR",
+            ]
+            for col, val in enumerate(vals):
+                item = QTableWidgetItem(str(val))
+                item.setTextAlignment(Qt.AlignCenter if col != 3 else Qt.AlignLeft | Qt.AlignVCenter)
+                if col == 2: item.setForeground(QColor(cor_emp))
+                if col == 13:
+                    item.setForeground(QColor("#e3b341"))
+                    item.setFont(QFont("Segoe UI", 8, QFont.Bold))
+                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                self._tabela.setItem(row, col, item)
+            self._tabela.item(row, 0).setData(Qt.UserRole, r)
+        try:
+            self._tabela.itemClicked.disconnect()
+        except Exception:
+            pass
+        self._tabela.itemClicked.connect(self._on_click)
 
-        btn_editar = QPushButton("EDITAR")
-        btn_editar.setFixedHeight(28)
-        btn_editar.setFont(QFont("Arial", 8, QFont.Bold))
-        btn_editar.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent;
-                border: 1px solid #e3b341;
-                border-radius: 6px;
-                color: #e3b341;
-                font-size: 9px;
-                padding: 0px 8px;
-            }}
-            QPushButton:hover {{ background: #e3b34122; }}
-        """)
-        btn_editar.clicked.connect(lambda _, reg=r: self._reeditar_ordem(reg))
+    def _filtrar(self, texto):
+        txt = texto.upper()
+        for row in range(self._tabela.rowCount()):
+            visivel = not txt or any(
+                txt in (self._tabela.item(row, c).text().upper() if self._tabela.item(row, c) else "")
+                for c in range(self._tabela.columnCount())
+            )
+            self._tabela.setRowHidden(row, not visivel)
 
-        h.addWidget(lbl_hora)
-        h.addLayout(info, 1)
-        h.addWidget(badge)
-        h.addWidget(btn_editar)
-        return frame
+    def _on_click(self, item):
+        if item.column() == 13:
+            r = self._tabela.item(item.row(), 0).data(Qt.UserRole)
+            if r:
+                self._reeditar_ordem(r)
+
+    # _make_card substituído por tabela — não mais necessário
 
     def _reeditar_ordem(self, registro):
-        """Carrega dados do histórico no formulário e permite reeditar/renegerar."""
+        """Carrega dados do histórico/Supabase no formulário para reeditar."""
+        # Suporte a registro do Supabase (tem 'motorista' direto) ou local (tem 'dados')
         dados = registro.get("dados")
-        if not dados:
+        supabase_id = registro.get("supabase_id") or registro.get("id")
+
+        if not dados and not registro.get("motorista"):
             QMessageBox.warning(self, "Aviso",
-                "Este registro nao possui dados completos para reeditar. "
-                "Apenas ordens geradas apos a atualizacao podem ser reeditadas.")
+                "Este registro nao possui dados suficientes para reeditar.")
             return
 
+        # Se veio do Supabase sem dados completos, monta dados básicos
+        if not dados and registro.get("motorista"):
+            dados = {
+                "empresa":          "Agrovia" if "AGRO" in str(registro.get("filial","")).upper() else "TopBrasil",
+                "Motorista":        str(registro.get("motorista","") or ""),
+                "Cavalo":           str(registro.get("placa","") or ""),
+                "Pagador":          str(registro.get("pagador","") or ""),
+                "Cliente":          str(registro.get("pagador","") or ""),
+                "Fábrica":          str(registro.get("fabrica","") or ""),
+                "Destino":          str(registro.get("destino","") or ""),
+                "UF":               str(registro.get("uf","") or ""),
+                "Pedido":           str(registro.get("pedido","") or ""),
+                "Produto":          str(registro.get("produto","") or ""),
+                "Embalagem":        str(registro.get("embalagem","") or ""),
+                "Colocador":        str(registro.get("colocador","") or ""),
+                "Pagamento":        str(registro.get("pagamento","") or ""),
+                "Peso Total":       str(registro.get("peso","") or ""),
+            }
+
         arquivo_antigo_xlsx = registro.get("arquivo", "")
-        arquivo_antigo_pdf  = arquivo_antigo_xlsx.replace(".xlsx", ".pdf")
+        arquivo_antigo_pdf  = arquivo_antigo_xlsx.replace(".xlsx", ".pdf") if arquivo_antigo_xlsx else ""
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Reeditar Ordem")
@@ -637,10 +752,13 @@ class HistoricoWidget(QWidget):
             ui._preencher_campos(dados)
             # Navega para aba de geração de ordem
             ui._nav(0)
-            # Guarda supabase_id para UPDATE em vez de INSERT
-            ui._reeditando_supabase_id = registro.get("supabase_id")
+            # Guarda id anterior para marcar como ALTERADO após gerar nova ordem
+            id_anterior = supabase_id or registro.get("supabase_id") or registro.get("id")
+            if id_anterior:
+                ui._reeditando_id_anterior = id_anterior
             # Guarda caminhos antigos para deletar após gerar
-            ui._arquivos_para_deletar = [arquivo_antigo_xlsx, arquivo_antigo_pdf]
+            if arquivo_antigo_xlsx:
+                ui._arquivos_para_deletar = [arquivo_antigo_xlsx, arquivo_antigo_pdf]
 
         bo.clicked.connect(continuar)
         dlg.exec()
@@ -3184,10 +3302,7 @@ class UI(QWidget):
 
         # Injeta usuário logado nos dados para gravar no Supabase
         dados["_usuario"] = self.usuario_logado or ""
-        # Injeta supabase_id se for reedição (faz PATCH em vez de INSERT)
-        if hasattr(self, "_reeditando_supabase_id") and self._reeditando_supabase_id:
-            dados["_supabase_id"] = self._reeditando_supabase_id
-            del self._reeditando_supabase_id
+        # Reedição sempre gera novo registro — _reeditando_id_anterior tratado em _on_sucesso
         self._thread = GeradorThread(dados, pasta, email, conta_gmail)
         self._thread.sucesso.connect(self._on_sucesso)
         self._thread.erro.connect(self._on_erro)
@@ -3433,6 +3548,32 @@ class UI(QWidget):
             usuario     = self.usuario_logado,
             supabase_id = supabase_id,
         )
+
+        # Se era reedição, marcar ordem anterior como ALTERADO no Supabase
+        if hasattr(self, "_reeditando_id_anterior") and self._reeditando_id_anterior:
+            try:
+                import urllib.request as _ureq
+                obs = f"Alterado para #{supabase_id}" if supabase_id else "Alterado"
+                body = json.dumps({
+                    "status":     "ALTERADO",
+                    "ativo":      False,
+                    "observacao": obs,
+                }).encode()
+                req = _ureq.Request(
+                    f"{SUPABASE_URL}/rest/v1/carregamentos?id=eq.{self._reeditando_id_anterior}",
+                    data=body,
+                    headers={
+                        "apikey":        SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type":  "application/json",
+                        "Prefer":        "return=minimal",
+                    },
+                    method="PATCH"
+                )
+                _ureq.urlopen(req, timeout=8)
+            except Exception:
+                pass
+            del self._reeditando_id_anterior
 
         msg = QMessageBox(self)
         msg.setWindowTitle("Sucesso")
