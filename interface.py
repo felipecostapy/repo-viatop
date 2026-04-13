@@ -2710,13 +2710,17 @@ class UI(QWidget):
 
         def sel(nome_empresa):
             if is_primeiro_login:
-                login = combo_usuario.currentText().strip().upper()
-                if not login or login not in [k.upper() for k in usuarios.keys()]:
+                import unicodedata as _ud
+                def _norm(s):
+                    return _ud.normalize("NFD", s.upper().strip()).encode("ascii","ignore").decode()
+                login = combo_usuario.currentText().strip()
+                login_norm = _norm(login)
+                if not login_norm or login_norm not in [_norm(k) for k in usuarios.keys()]:
                     lbl_erro.setText("⚠  Selecione um usuário válido.")
                     combo_usuario.setFocus()
                     return
-                # Encontra a chave case-insensitive
-                chave_real = next(k for k in usuarios if k.upper() == login)
+                # Encontra a chave ignorando acentos e case
+                chave_real = next(k for k in usuarios if _norm(k) == login_norm)
                 self.usuario_logado     = chave_real
                 # Usa assinatura do Supabase se disponível, senão usa o nome do dict local
                 self.assinatura_usuario = _assinaturas_supabase.get(chave_real.upper()) or usuarios[chave_real]
