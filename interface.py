@@ -1704,9 +1704,23 @@ def _origem_por_fabrica(fabrica):
 def parsear_mensagem_whatsapp(texto):
     resultado = {}
 
+    # Lista de todas as chaves conhecidas para detectar campo vazio
+    CHAVES = ["FILIAL","PAGADOR","CLIENTE","AGENCIA","AGÊNCIA","MOTORISTA","PLACA",
+              "FABRICA","FÁBRICA","DESTINO","UF","FAZENDA","PESO","FRETE/EMP",
+              "FRETE/MOT","ROTA","AGENCIAMENTO","PAGAMENTO","PEDIDO","PRODUTO",
+              "EMBALAGEM","COLOCADOR","SOLICITANTE","STATUS","PEDIDO\s+\d"]
+    _CHAVES_RE = "|".join(CHAVES)
+
     def extrair(chave):
-        match = re.search(rf"^{chave}\s*:\s*(.+)", texto, re.IGNORECASE | re.MULTILINE)
-        return match.group(1).strip() if match else ""
+        # Captura só até o fim da linha (não avança para a próxima)
+        match = re.search(rf"^{chave}\s*:\s*(.*)", texto, re.IGNORECASE | re.MULTILINE)
+        if not match:
+            return ""
+        valor = match.group(1).strip()
+        # Se o valor começa com "OUTRA_CHAVE:" significa que o campo estava vazio
+        if re.match(rf"^(?:{_CHAVES_RE})\s*:", valor, re.IGNORECASE):
+            return ""
+        return valor
 
     filial = extrair("FILIAL").upper()
     resultado["empresa"] = "Agrovia" if "AGRO" in filial else "TopBrasil"
@@ -1856,6 +1870,14 @@ def parsear_mensagem_whatsapp(texto):
         resultado[f"Peso{sufixo}"]     = peso
 
     resultado["_num_pedidos"] = len(pedidos)
+
+    colocador = extrair("COLOCADOR")
+    if colocador:
+        resultado["Colocador"] = colocador
+
+    pagamento = extrair("PAGAMENTO")
+    if pagamento:
+        resultado["Pagamento"] = pagamento
 
     return resultado
 
