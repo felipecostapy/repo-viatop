@@ -83,6 +83,32 @@ def make_combo(items):
     cb.setMinimumHeight(32)
     cb.setCompleter(QCompleter(items))
     cb.completer().setCaseSensitivity(Qt.CaseInsensitive)
+    cb.setStyleSheet("""
+        QComboBox {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 6px 10px;
+            color: #e6edf3;
+            font-size: 12px;
+        }
+        QComboBox:focus { border-color: #238636; }
+        QComboBox::drop-down { border: none; width: 20px; }
+        QComboBox::down-arrow {
+            border-left: 4px solid transparent;
+            border-right: 4px solid transparent;
+            border-top: 5px solid #8b949e;
+            width: 0; height: 0; margin-right: 6px;
+        }
+        QComboBox QAbstractItemView {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            color: #e6edf3;
+            selection-background-color: #23863633;
+            selection-color: #e6edf3;
+            outline: none;
+        }
+    """)
     return cb
 
 def make_date():
