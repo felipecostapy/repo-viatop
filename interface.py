@@ -240,6 +240,8 @@ def _deletar_supabase_linha(sb_id):
     )
     urllib.request.urlopen(req, timeout=10)
 
+_assinaturas_supabase = {}
+
 USUARIOS = {
     "FELIPE":   "Felipe Costa",
     "MARCOS":   "Marcos Silva",
@@ -253,15 +255,35 @@ def _usuarios_path():
     return Path(__file__).parent / "usuarios.json"
 
 def carregar_usuarios():
-    """Carrega usuários do arquivo JSON. Se não existir, usa o dicionário padrão."""
+    """Carrega usuarios da tabela 'usuarios' no Supabase. Fallback para JSON local."""
+    try:
+        import urllib.request as _ureq
+        req = _ureq.Request(
+            f"{SUPABASE_URL}/rest/v1/usuarios?select=usuario,nome,assinatura&order=usuario.asc",
+            headers={
+                "apikey":        SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            }
+        )
+        with _ureq.urlopen(req, timeout=5) as r:
+            rows = json.loads(r.read().decode("utf-8"))
+        if rows:
+            # Retorna {USUARIO: nome} e guarda assinatura em _assinaturas_supabase
+            global _assinaturas_supabase
+            _assinaturas_supabase = {
+                str(r["usuario"]).upper(): str(r.get("assinatura") or r.get("nome") or r["usuario"])
+                for r in rows
+            }
+            return {str(r["usuario"]).upper(): str(r.get("nome") or r["usuario"]) for r in rows}
+    except Exception:
+        pass
+    # Fallback: JSON local
     path = _usuarios_path()
     if path.exists():
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except Exception:
             pass
-    # Cria o arquivo com os usuários padrão na primeira execução
-    path.write_text(json.dumps(USUARIOS, ensure_ascii=False, indent=2), encoding="utf-8")
     return dict(USUARIOS)
 
 
@@ -349,7 +371,9 @@ class HistoricoWidget(QWidget):
                 criado = str(r.get("criado_em","") or "")
                 try:
                     import datetime as _dt
-                    dt = _dt.datetime.strptime(criado[:19], "%Y-%m-%d %H:%M:%S") - _dt.timedelta(hours=3)
+                    # Supabase pode retornar com T ou espaço: normalizar
+                    criado_norm = criado[:19].replace("T", " ")
+                    dt = _dt.datetime.strptime(criado_norm, "%Y-%m-%d %H:%M:%S") - _dt.timedelta(hours=3)
                     data = dt.strftime("%d/%m/%Y")
                     r["_data_fmt"] = data
                     r["_hora_fmt"] = dt.strftime("%H:%M")
@@ -1708,16 +1732,14 @@ def parsear_mensagem_whatsapp(texto):
     CHAVES = ["FILIAL","PAGADOR","CLIENTE","AGENCIA","AGÊNCIA","MOTORISTA","PLACA",
               "FABRICA","FÁBRICA","DESTINO","UF","FAZENDA","PESO","FRETE/EMP",
               "FRETE/MOT","ROTA","AGENCIAMENTO","PAGAMENTO","PEDIDO","PRODUTO",
-              "EMBALAGEM","COLOCADOR","SOLICITANTE","STATUS","PEDIDO\s+\d"]
+              "EMBALAGEM","COLOCADOR","SOLICITANTE","STATUS"]
     _CHAVES_RE = "|".join(CHAVES)
 
     def extrair(chave):
-        # Captura só até o fim da linha (não avança para a próxima)
         match = re.search(rf"^{chave}\s*:\s*(.*)", texto, re.IGNORECASE | re.MULTILINE)
         if not match:
             return ""
         valor = match.group(1).strip()
-        # Se o valor começa com "OUTRA_CHAVE:" significa que o campo estava vazio
         if re.match(rf"^(?:{_CHAVES_RE})\s*:", valor, re.IGNORECASE):
             return ""
         return valor
@@ -1756,14 +1778,12 @@ def parsear_mensagem_whatsapp(texto):
     # ── FÁBRICA e ORIGEM ─────────────────────────────────────────────
     # Origem é sempre definida pela fábrica (fixa por regra)
     # Nunca sobrescreve com o texto livre da tag
-    fabrica = extrair("FABRICA")
+    fabrica = extrair("FABRICA") or extrair("FÁBRICA")
     if fabrica:
-        # Guarda apenas o primeiro token como nome da fábrica no campo
-        resultado["Fábrica"] = fabrica.upper().split()[0]
+        resultado["Fábrica"] = fabrica.upper().strip()
         origem_fixa = _origem_por_fabrica(fabrica)
         if origem_fixa:
             resultado["Origem"] = origem_fixa
-        # Se fábrica não reconhecida, deixa Origem em branco (usuário preenche)
 
     resultado["Motorista"] = extrair("MOTORISTA")
     resultado["Cavalo"]    = extrair("PLACA")
@@ -1822,7 +1842,11 @@ def parsear_mensagem_whatsapp(texto):
             break
 
     resultado["Produto"] = produto_limpo
-    if embalagem:
+    # Embalagem: primeiro tenta extração direta da tag, depois do produto
+    embalagem_tag = extrair("EMBALAGEM")
+    if embalagem_tag:
+        resultado["Embalagem"] = embalagem_tag.upper()
+    elif embalagem:
         resultado["Embalagem"] = embalagem
 
     destino_raw = extrair("DESTINO")
@@ -2665,8 +2689,9 @@ class UI(QWidget):
                     return
                 # Encontra a chave case-insensitive
                 chave_real = next(k for k in usuarios if k.upper() == login)
-                self.usuario_logado      = chave_real
-                self.assinatura_usuario  = usuarios[chave_real]
+                self.usuario_logado     = chave_real
+                # Usa assinatura do Supabase se disponível, senão usa o nome do dict local
+                self.assinatura_usuario = _assinaturas_supabase.get(chave_real.upper()) or usuarios[chave_real]
                 # Preenche o campo assinatura
                 if "Assinatura" in self.entradas:
                     self.entradas["Assinatura"].setText(self.assinatura_usuario)
@@ -3316,9 +3341,11 @@ class UI(QWidget):
             self._adicionar_linha_pedido()
 
         campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
-                          "Destino", "Motorista", "Cavalo", "Solicitante",
-                          "Agência", "UF", "Frete/Emp", "Frete/Mot",
-                          "Rota", "Agenciamento"]
+                          "Destino", "Motorista", "Cavalo", "Pagador",
+                          "Solicitante", "Agência", "UF", "Frete/Emp", "Frete/Mot",
+                          "Rota", "Agenciamento", "Colocador", "Pagamento",
+                          "Peso Total", "CPF", "Contato", "Carroceria",
+                          "Carreta 1", "Carreta 2", "Carreta 3"]
         for campo in campos_simples:
             valor = dados.get(campo, "")
             if not valor:
