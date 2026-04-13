@@ -1769,6 +1769,7 @@ class BaseWidget(QWidget):
         col = item.column()
         row = item.row()
         txt = item.text() if item else ""
+<<<<<<< Updated upstream
         if col == 18:
             if txt == "OK":
                 self._salvar_edicao(row)
@@ -1776,11 +1777,24 @@ class BaseWidget(QWidget):
                 dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(18)]
                 self._toggle_edicao(row, dados)
         elif col == 19:
+=======
+        if col == 10:
+            if txt == "OK":
+                self._salvar_edicao(row)
+            else:  # EDIT
+                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(10)]
+                self._toggle_edicao(row, dados)
+        elif col == 11:
+>>>>>>> Stashed changes
             if txt == "✕":  # cancelar edição
                 self._linhas_editando.pop(row, None)
                 self._carregar()
             else:  # DEL
+<<<<<<< Updated upstream
                 dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(18)]
+=======
+                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(10)]
+>>>>>>> Stashed changes
                 self._deletar_linha(row, dados)
 
     def _toggle_edicao(self, row, dados_orig):
@@ -1820,6 +1834,7 @@ class BaseWidget(QWidget):
             }}
         """
 
+<<<<<<< Updated upstream
         # col 0=# (não editável), col 1=STATUS(combo), cols 2-17=QLineEdit
         # #(0) STATUS(1) DATA(2) FILIAL(3) CLIENTE(4) PEDIDO(5) PRODUTO(6)
         # MOTORISTA(7) PLACA(8) DESTINO(9) UF(10) PESO(11)
@@ -1833,6 +1848,12 @@ class BaseWidget(QWidget):
                 self._tabela.setCellWidget(row, c, lbl)
                 continue
             if c == 1:  # STATUS — combo
+=======
+        # col 0-7 e 9 = QLineEdit, col 8 = QComboBox (STATUS)
+        for c in range(10):
+            val = self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""
+            if c == 8:  # STATUS — combo
+>>>>>>> Stashed changes
                 combo = QComboBox()
                 combo.addItems(STATUS_OPTS)
                 combo.setStyleSheet(COMBO_SS)
@@ -1844,6 +1865,7 @@ class BaseWidget(QWidget):
                 inp.setAlignment(Qt.AlignCenter)
                 inp.setFrame(False)
                 inp.setStyleSheet(INP_SS)
+<<<<<<< Updated upstream
                 if c != 2:  # não força maiúsculo na data (col 2)
                     inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
                 self._tabela.setCellWidget(row, c, inp)
@@ -1851,6 +1873,15 @@ class BaseWidget(QWidget):
         # Botão OK na coluna 18, ✕ na 19
         self._tabela.setItem(row, 18, self._make_btn_item("OK",  "#2ea043"))
         self._tabela.setItem(row, 19, self._make_btn_item("✕", "#da3633"))
+=======
+                if c != 0:  # não força maiúsculo na data
+                    inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
+                self._tabela.setCellWidget(row, c, inp)
+
+        # Botão OK na coluna 10, DEL some temporariamente
+        self._tabela.setItem(row, 10, self._make_btn_item("OK",  "#2ea043"))
+        self._tabela.setItem(row, 11, self._make_btn_item("✕", "#da3633"))
+>>>>>>> Stashed changes
 
     def _salvar_edicao(self, row):
         import datetime as _dt
@@ -1861,11 +1892,16 @@ class BaseWidget(QWidget):
             return
 
         # Coleta valores de todos os widgets editáveis
+<<<<<<< Updated upstream
         # #(0-skip) STATUS(1) DATA(2) FILIAL(3) CLIENTE(4) PEDIDO(5) PRODUTO(6)
         # MOTORISTA(7) PLACA(8) DESTINO(9) UF(10) PESO(11)
         # FRT/E(12) FRT/M(13) ROTA(14) AGENC.(15) PAGAMENTO(16) COLOCADOR(17)
         vals = {}
         for c in range(18):
+=======
+        vals = {}
+        for c in range(10):
+>>>>>>> Stashed changes
             w = self._tabela.cellWidget(row, c)
             if isinstance(w, QComboBox):
                 vals[c] = w.currentText()
@@ -1875,6 +1911,7 @@ class BaseWidget(QWidget):
                 item = self._tabela.item(row, c)
                 vals[c] = item.text() if item else ""
 
+<<<<<<< Updated upstream
         STATUS_OPTS_COR = {
             "CARREGADO": "#1a3a1a", "PAGO": "#1a2a3a",
             "MARCADO": "#3a2a00",   "CHEGA": "#0a1a2a",
@@ -1900,10 +1937,33 @@ class BaseWidget(QWidget):
                 "agenciamento": vals[15].upper(),
                 "pagamento":    vals[16].upper(),
                 "colocador":    vals[17].upper(),
+=======
+        # col → campo Supabase
+        # 0=DATA, 1=FILIAL, 2=PAGADOR, 3=MOTORISTA, 4=PLACA,
+        # 5=DESTINO, 6=UF, 7=PESO, 8=STATUS, 9=COLOCADOR
+        STATUS_OPTS_COR = {
+            "CARREGADO": "#1a3a1a", "PAGO": "#1a2a3a",
+            "MARCADO": "#3a2a00",   "CHEGA": "#1a2a3a",
+            "AGUARDANDO": "#2a2a00","DESCARGA": "#2a1a3a",
+            "A CAMINHO": "#1a2030",
+        }
+
+        try:
+            campos = {
+                "filial":    vals[1].upper(),
+                "pagador":   vals[2].upper(),
+                "motorista": vals[3].upper(),
+                "placa":     vals[4].upper(),
+                "destino":   vals[5].upper(),
+                "uf":        vals[6].upper(),
+                "status":    vals[8].upper(),
+                "colocador": vals[9].upper(),
+>>>>>>> Stashed changes
             }
             # Data: converte DD/MM/AAAA → AAAA-MM-DD
             try:
                 campos["data"] = _dt.datetime.strptime(
+<<<<<<< Updated upstream
                     vals[2].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
             except Exception:
                 pass
@@ -1918,12 +1978,22 @@ class BaseWidget(QWidget):
                 pass
             try:
                 campos["frete_mot"] = float(vals[13].replace(",", "."))
+=======
+                    vals[0].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+>>>>>>> Stashed changes
             except Exception:
                 pass
+            # Peso: float
+            try:
+                campos["peso"] = float(vals[7].replace(",", "."))
+            except Exception:
+                pass
+            # Remove vazios
             campos = {k: v for k, v in campos.items() if v not in ("", None)}
 
             _atualizar_supabase_linha(sb_id, campos)
 
+<<<<<<< Updated upstream
             status  = campos.get("status", "")
             bg_cor  = STATUS_OPTS_COR.get(status, "#161b22")
             bg      = QColor(bg_cor)
@@ -1932,12 +2002,28 @@ class BaseWidget(QWidget):
             for c in range(18):
                 self._tabela.removeCellWidget(row, c)
                 item = QTableWidgetItem(str(novos[c]))
+=======
+            # Atualiza visual da linha
+            status  = campos.get("status", "")
+            bg_cor  = STATUS_OPTS_COR.get(status, "#161b22")
+            bg      = QColor(bg_cor)
+            novos   = [vals[c] for c in range(10)]
+
+            for c in range(10):
+                self._tabela.removeCellWidget(row, c)
+                item = QTableWidgetItem(novos[c])
+>>>>>>> Stashed changes
                 item.setTextAlignment(Qt.AlignCenter)
                 item.setBackground(bg)
                 self._tabela.setItem(row, c, item)
 
+<<<<<<< Updated upstream
             self._tabela.setItem(row, 18, self._make_btn_item("EDIT", "#e3b341"))
             self._tabela.setItem(row, 19, self._make_btn_item("DEL",  "#da3633"))
+=======
+            self._tabela.setItem(row, 10, self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(row, 11, self._make_btn_item("DEL",  "#da3633"))
+>>>>>>> Stashed changes
             self._linhas_editando.pop(row, None)
             self._tabela.setRowHeight(row, 28)
             self._lbl_status.setText("Registro atualizado no banco de dados.")
