@@ -1877,23 +1877,25 @@ def parsear_mensagem_whatsapp(texto):
 
     destino_raw = extrair("DESTINO")
     uf = extrair("UF").upper()
-    if destino_raw and uf:
-        destino_completo = f"{destino_raw.strip()} - {uf}"
-    elif destino_raw:
-        destino_completo = destino_raw.strip()
-    else:
-        destino_completo = ""
 
-    if destino_completo:
-        sep = re.split(r"\s+(FAZ\.?\s|FAZENDA\s|SITIO\s|SÍTIO\s|CHACARA\s)", destino_completo, flags=re.IGNORECASE)
+    # UF sempre separado — o gerador concatena na célula O10
+    if uf:
+        resultado["UF"] = uf
+
+    # Destino: só a cidade, sem UF
+    destino_limpo = destino_raw.strip() if destino_raw else ""
+
+    if destino_limpo:
+        sep = re.split(r"\s+(FAZ\.?\s|FAZENDA\s|SITIO\s|SÍTIO\s|CHACARA\s)", destino_limpo, flags=re.IGNORECASE)
         if len(sep) >= 3:
             resultado["Destino"] = sep[0].strip()
             resultado["Fazenda"] = (sep[1] + sep[2]).strip()
         else:
-            resultado["Destino"] = destino_completo
+            resultado["Destino"] = destino_limpo
             resultado["Fazenda"] = ""
     else:
-        resultado["Destino"] = resultado["Fazenda"] = ""
+        resultado["Destino"] = resultado.get("Destino", "")
+        resultado["Fazenda"] = resultado.get("Fazenda", "")
 
     fazenda = extrair("FAZENDA")
     if fazenda:
