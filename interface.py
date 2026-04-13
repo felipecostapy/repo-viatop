@@ -148,7 +148,7 @@ def _historico_path():
         return Path(sys.executable).parent / "historico.json"
     return Path(__file__).parent / "historico.json"
 
-def salvar_historico(dados, caminho_arquivo, conta=None, usuario=None):
+def salvar_historico(dados, caminho_arquivo, conta=None, usuario=None, supabase_id=None):
     path = _historico_path()
     try:
         historico = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
@@ -211,7 +211,9 @@ def carregar_historico_supabase(limite=300):
             f"{SUPABASE_URL}/rest/v1/carregamentos"
             f"?select=id,criado_em,data,filial,pagador,motorista,placa,"
             f"destino,uf,peso,status,pedido,produto,embalagem,colocador,"
-            f"usuario,ativo,observacao,pagamento"
+            f"usuario,ativo,observacao,pagamento,frete_emp,frete_mot,rota,"
+            f"agenciamento,origem,cpf,contato,carroceria,carreta1,carreta2,"
+            f"carreta3,fazenda,solicitante"
             f"&order=id.desc&limit={limite}",
             headers={
                 "apikey":        SUPABASE_KEY,
@@ -524,7 +526,15 @@ class HistoricoWidget(QWidget):
         dados = r.get("dados")
         sb_id = r.get("id") or r.get("supabase_id")
 
-        # Se veio do Supabase, monta dados básicos
+        # Se veio do Supabase sem dados completos, busca no histórico local pelo supabase_id
+        if not dados and sb_id:
+            historico_local = carregar_historico()
+            for reg in historico_local:
+                if str(reg.get("supabase_id","")) == str(sb_id) and reg.get("dados"):
+                    dados = reg["dados"]
+                    break
+
+        # Se ainda não tem dados, monta o básico do que o Supabase tem
         if not dados and r.get("motorista"):
             filial = str(r.get("filial","") or "").upper()
             dados = {
@@ -539,9 +549,22 @@ class HistoricoWidget(QWidget):
                 "Pedido":     str(r.get("pedido","") or ""),
                 "Produto":    str(r.get("produto","") or ""),
                 "Embalagem":  str(r.get("embalagem","") or ""),
-                "Colocador":  str(r.get("colocador","") or ""),
-                "Pagamento":  str(r.get("pagamento","") or ""),
-                "Peso Total": str(r.get("peso","") or ""),
+                "Colocador":    str(r.get("colocador","") or ""),
+                "Pagamento":    str(r.get("pagamento","") or ""),
+                "Frete/Emp":    str(r.get("frete_emp","") or ""),
+                "Frete/Mot":    str(r.get("frete_mot","") or ""),
+                "Rota":         str(r.get("rota","") or ""),
+                "Agenciamento": str(r.get("agenciamento","") or ""),
+                "Origem":       str(r.get("origem","") or ""),
+                "CPF":          str(r.get("cpf","") or ""),
+                "Contato":      str(r.get("contato","") or ""),
+                "Carroceria":   str(r.get("carroceria","") or ""),
+                "Carreta 1":    str(r.get("carreta1","") or ""),
+                "Carreta 2":    str(r.get("carreta2","") or ""),
+                "Carreta 3":    str(r.get("carreta3","") or ""),
+                "Fazenda":      str(r.get("fazenda","") or ""),
+                "Solicitante":  str(r.get("solicitante","") or ""),
+                "Peso Total":   str(r.get("peso","") or ""),
             }
 
         if not dados:
@@ -2318,6 +2341,26 @@ class UI(QWidget):
         r2.addWidget(make_field("Agenciamento", self.entradas["Agenciamento"]), 1)
         v.addLayout(r2)
 
+        r3 = QHBoxLayout(); r3.setSpacing(6)
+        self.entradas["Colocador"]  = make_input()
+        self.entradas["Pagamento"]  = make_input()
+        self.entradas["Peso Total"] = make_input()
+        self.entradas["Peso Total"].setReadOnly(True)
+        self.entradas["Peso Total"].setPlaceholderText("Auto")
+        self.entradas["Peso Total"].setStyleSheet(f"""
+            QLineEdit {{
+                background: #1c2128; border: 1px solid {BORDER2};
+                border-radius: 6px; padding: 6px 10px;
+                color: {ACCENT}; font-size: 12px; font-weight: 700;
+            }}
+        """)
+        self.entradas["UF"].textChanged.connect(
+            lambda t: self._uf_cab.setText(t.upper()) if hasattr(self, "_uf_cab") else None)
+        r3.addWidget(make_field("Colocador",  self.entradas["Colocador"]),  2)
+        r3.addWidget(make_field("Pagamento",  self.entradas["Pagamento"]),  2)
+        r3.addWidget(make_field("Peso Total", self.entradas["Peso Total"]), 1)
+        v.addLayout(r3)
+
         v.addStretch()
         return frame
 
@@ -2350,7 +2393,7 @@ class UI(QWidget):
         self.btn1 = QPushButton("GERAR ORDEM")
         self.btn1.setObjectName("btn_gerar")
 
-        self.btn2 = QPushButton("GERAR + EMAIL")
+        self.btn2 = QPushButton("GRAVAR NO BANCO")
         self.btn2.setObjectName("btn_email")
 
         self.btn3 = QPushButton("NOVA ORDEM")
@@ -2364,10 +2407,26 @@ class UI(QWidget):
 
         self.btn_wpp.clicked.connect(self.importar_whatsapp)
         self.btn1.clicked.connect(lambda: self.executar(False))
-        self.btn2.clicked.connect(lambda: self.executar(True))
+        self.btn2.clicked.connect(self._gravar_banco)
         self.btn3.clicked.connect(self.nova_ordem)
 
         return v
+
+    def _atualizar_peso_total(self):
+        """Soma todos os campos Peso ativos e atualiza o campo Peso Total."""
+        total = 0.0
+        for i in range(4):
+            sufixo = f" {i + 1}" if i > 0 else ""
+            chave  = f"Peso{sufixo}"
+            w = self.entradas.get(chave)
+            if w and isinstance(w, QLineEdit):
+                try:
+                    total += float(str(w.text()).replace(",", "."))
+                except Exception:
+                    pass
+        w_total = self.entradas.get("Peso Total")
+        if w_total:
+            w_total.setText(str(int(total)) if total == int(total) else f"{total:.1f}")
 
     def _adicionar_linha_pedido(self, ativa=True):
         MAX = 4
@@ -2427,6 +2486,8 @@ class UI(QWidget):
                 inp.setStyleSheet("QLineEdit { padding: 2px 6px; font-size: 12px; }")
                 inp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
+                if chave == "Peso":
+                    inp.textChanged.connect(lambda _: self._atualizar_peso_total())
             inp_lay.addWidget(inp, stretch)
             nome = chave + sufixo
             linha[nome] = inp
@@ -2709,6 +2770,59 @@ class UI(QWidget):
         self._thread.erro.connect(self._on_erro)
         self._thread.start()
 
+    def _gravar_banco(self):
+        """Grava os dados do formulário no Supabase sem gerar documento."""
+        from gerador import gravar_supabase
+        dados = self.coletar()
+        erros = []
+        if not dados.get("Motorista"): erros.append("Motorista")
+        if not dados.get("Cavalo"):    erros.append("Placa")
+        if erros:
+            QMessageBox.warning(self, "Campos obrigatorios",
+                "Preencha: " + " | ".join(erros))
+            return
+        dados["_usuario"] = self.usuario_logado or ""
+        try:
+            novo_id = gravar_supabase(dados, usuario=self.usuario_logado or "")
+            dados["_supabase_id_resultado"] = novo_id
+            salvar_historico(dados, "", usuario=self.usuario_logado)
+
+            # Se era reedição, marcar anterior como ALTERADO
+            id_anterior = getattr(self, "_reeditando_id_anterior", None)
+            if id_anterior:
+                try:
+                    import urllib.request as _ureq
+                    obs  = f"Alterado para #{novo_id}" if novo_id else "Alterado"
+                    body = json.dumps({"status": "ALTERADO", "ativo": False, "observacao": obs}).encode()
+                    req  = _ureq.Request(
+                        f"{SUPABASE_URL}/rest/v1/carregamentos?id=eq.{id_anterior}",
+                        data=body,
+                        headers={
+                            "apikey":        SUPABASE_KEY,
+                            "Authorization": f"Bearer {SUPABASE_KEY}",
+                            "Content-Type":  "application/json",
+                            "Prefer":        "return=minimal",
+                        },
+                        method="PATCH"
+                    )
+                    _ureq.urlopen(req, timeout=8)
+                except Exception as e2:
+                    try:
+                        with open("supabase_log.txt", "a", encoding="utf-8") as f2:
+                            import datetime as _dt2
+                            f2.write(f"[{_dt2.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] Erro PATCH ALTERADO id={id_anterior}: {e2}\n")
+                    except Exception:
+                        pass
+                del self._reeditando_id_anterior
+
+            if hasattr(self, "_historico_widget") and self._historico_widget:
+                self._historico_widget.recarregar()
+
+            QMessageBox.information(self, "Gravado",
+                f"Carregamento #{novo_id} gravado no banco de dados.")
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", str(e))
+
     def _dialog_escolher_conta(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Enviar por Gmail")
@@ -2893,16 +3007,68 @@ class UI(QWidget):
         for b in [self.btn1, self.btn2, self.btn3]:
             b.setEnabled(True)
 
-        conta   = self._planilha_widget._combo_conta.currentText()
+        # Log de debug — gravar estado da reedição
+        try:
+            with open("supabase_log.txt", "a", encoding="utf-8") as _f:
+                import datetime as _dtnow
+                _id_ant = getattr(self, "_reeditando_id_anterior", "NÃO DEFINIDO")
+                _f.write(f"[{_dtnow.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] _on_sucesso: id_anterior={_id_ant}\n")
+        except Exception:
+            pass
+
+        # Deletar arquivos antigos se for reedição
+        if hasattr(self, "_arquivos_para_deletar"):
+            for arq in self._arquivos_para_deletar:
+                try:
+                    if arq and os.path.exists(arq) and arq != caminho:
+                        os.remove(arq)
+                except Exception:
+                    pass
+            del self._arquivos_para_deletar
+
+        supabase_id = self._thread.dados.get("_supabase_id_resultado")
         salvar_historico(
             self._thread.dados, caminho,
-            conta   = conta if conta != "(nenhuma conta)" else None,
             usuario = self.usuario_logado,
         )
 
+        # Se era reedição, marcar ordem anterior como ALTERADO
+        id_anterior = getattr(self, "_reeditando_id_anterior", None)
+        if id_anterior:
+            try:
+                import urllib.request as _ureq
+                obs  = f"Alterado para #{supabase_id}" if supabase_id else "Alterado"
+                body = json.dumps({"status": "ALTERADO", "ativo": False, "observacao": obs}).encode()
+                req  = _ureq.Request(
+                    f"{SUPABASE_URL}/rest/v1/carregamentos?id=eq.{id_anterior}",
+                    data=body,
+                    headers={
+                        "apikey":        SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                        "Content-Type":  "application/json",
+                        "Prefer":        "return=minimal",
+                    },
+                    method="PATCH"
+                )
+                _ureq.urlopen(req, timeout=8)
+            except Exception as e:
+                # Log do erro
+                try:
+                    with open("supabase_log.txt", "a", encoding="utf-8") as f:
+                        import datetime as _dt2
+                        f.write(f"[{_dt2.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] Erro PATCH ALTERADO id={id_anterior}: {e}\n")
+                except Exception:
+                    pass
+            if hasattr(self, "_reeditando_id_anterior"):
+                del self._reeditando_id_anterior
+
+        # Recarrega histórico se estiver visível
+        if hasattr(self, "_historico_widget") and self._historico_widget:
+            self._historico_widget.recarregar()
+
         msg = QMessageBox(self)
         msg.setWindowTitle("Sucesso")
-        msg.setText("✔  Ordem gerada com sucesso")
+        msg.setText(f"Ordem #{supabase_id} gerada com sucesso." if supabase_id else "Ordem gerada com sucesso.")
         msg.setIcon(QMessageBox.NoIcon)
         msg.setStyleSheet(f"""
             QMessageBox {{ background-color: {BG}; }}
@@ -2913,8 +3079,6 @@ class UI(QWidget):
             }}
         """)
         msg.exec()
-
-        self._dialog_gravar_planilha(self._thread.dados)
 
     def _dialog_gravar_planilha(self, dados):
         conta = self._planilha_widget._combo_conta.currentText()

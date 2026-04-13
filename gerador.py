@@ -192,6 +192,15 @@ def gravar_supabase(dados, usuario=None):
         "colocador":    str(dados.get("Colocador", "")).upper(),
         "pagamento":    str(dados.get("Pagamento", "")).upper(),
         "usuario":      str(usuario or "").upper(),
+        "origem":       str(dados.get("Origem", "")).upper(),
+        "cpf":          str(dados.get("CPF", "")).upper(),
+        "contato":      str(dados.get("Contato", "")).upper(),
+        "carroceria":   str(dados.get("Carroceria", "")).upper(),
+        "carreta1":     str(dados.get("Carreta 1", "")).upper(),
+        "carreta2":     str(dados.get("Carreta 2", "")).upper(),
+        "carreta3":     str(dados.get("Carreta 3", "")).upper(),
+        "fazenda":      str(dados.get("Fazenda", "")).upper(),
+        "solicitante":  str(dados.get("Solicitante", "")).upper(),
     }
 
     # Remove campos vazios
@@ -264,6 +273,15 @@ def atualizar_supabase(supabase_id, dados, usuario=None):
         "colocador":    str(dados.get("Colocador", "")).upper(),
         "pagamento":    str(dados.get("Pagamento", "")).upper(),
         "usuario":      str(usuario or "").upper(),
+        "origem":       str(dados.get("Origem", "")).upper(),
+        "cpf":          str(dados.get("CPF", "")).upper(),
+        "contato":      str(dados.get("Contato", "")).upper(),
+        "carroceria":   str(dados.get("Carroceria", "")).upper(),
+        "carreta1":     str(dados.get("Carreta 1", "")).upper(),
+        "carreta2":     str(dados.get("Carreta 2", "")).upper(),
+        "carreta3":     str(dados.get("Carreta 3", "")).upper(),
+        "fazenda":      str(dados.get("Fazenda", "")).upper(),
+        "solicitante":  str(dados.get("Solicitante", "")).upper(),
     }
     registro = {k: v for k, v in registro.items() if v not in (None, "", 0, 0.0)}
 
@@ -424,7 +442,7 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
 
     # Define número da ordem para imprimir no PDF
     if _ordem_id:
-        dados["Numero Ordem"] = f"ORDEM #{_ordem_id}"
+        dados["Numero Ordem"] = str(_ordem_id) if _ordem_id else ""
 
     for chave in list(dados.keys()):
         if not chave.startswith("_"):
@@ -449,7 +467,8 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
 
     cavalo = limpar_nome(cavalo_formatado)
 
-    nome_arquivo = f"ORDEM_{primeiro_nome}_{cavalo}.xlsx"
+    _num = str(_ordem_id) if _ordem_id else "0"
+    nome_arquivo = f"OR{_num}_{primeiro_nome}_{cavalo}.xlsx"
     caminho = os.path.join(pasta_destino, nome_arquivo)
 
     contador = 1

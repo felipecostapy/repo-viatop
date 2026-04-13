@@ -1,5 +1,5 @@
-[12/04/2026 22:29:00]
-Local:  3.0.5
-Remota: 3.0.5
+[12/04/2026 23:15:50]
+Local:  3.0.6
+Remota: 3.0.6
 URL:    https://raw.githubusercontent.com/felipecostapy/repo-viatop/master/version.txt
 Resultado: versao local ja atualizada
