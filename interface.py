@@ -1858,15 +1858,18 @@ def parsear_mensagem_whatsapp(texto):
         texto, re.IGNORECASE | re.MULTILINE
     )
     if match_mesmo:
-        # Mesma linha — preenche ambos com o mesmo valor
         valor_comum = match_mesmo.group(3).strip()
         resultado["Solicitante"] = valor_comum
         resultado["Cliente"]     = valor_comum
+        resultado["Pagador"]     = valor_comum
     else:
         if pagador:
             resultado["Solicitante"] = pagador
+            resultado["Pagador"]     = pagador
         if cliente:
             resultado["Cliente"] = cliente
+            if not pagador:
+                resultado["Pagador"] = cliente
 
     # ── FÁBRICA e ORIGEM ─────────────────────────────────────────────
     # Origem é sempre definida pela fábrica (fixa por regra)
@@ -2368,10 +2371,15 @@ class UI(QWidget):
         self.entradas["Origem"]  = make_input()
         self.entradas["Destino"] = make_input()
         self.entradas["Cliente"] = make_input()
-        r2.addWidget(make_field("Origem", self.entradas["Origem"]), 1)
+        r2.addWidget(make_field("Origem",  self.entradas["Origem"]),  1)
         r2.addWidget(make_field("Destino", self.entradas["Destino"]), 1)
         r2.addWidget(make_field("Cliente", self.entradas["Cliente"]), 1)
         v.addLayout(r2)
+
+        r3 = QHBoxLayout(); r3.setSpacing(6)
+        self.entradas["Pagador"] = make_input()
+        r3.addWidget(make_field("Pagador", self.entradas["Pagador"]), 1)
+        v.addLayout(r3)
 
         self.entradas["Fazenda"] = make_input()
         v.addWidget(make_field("Fazenda", self.entradas["Fazenda"]))
