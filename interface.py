@@ -9,169 +9,7 @@ from PySide6.QtCore import Qt, QDate, QThread, Signal, QTimer, QPropertyAnimatio
 from PySide6.QtGui import QFont, QPainter, QColor, QPixmap, QIcon, QPalette
 from PySide6.QtWidgets import QCompleter, QDateEdit
 from gerador import gerar_ordem, _listar_contas_gmail, adicionar_conta_gmail
-
-# ── Supabase — BASE e Controle de Pedidos ─────────────────────────
-SUPABASE_URL = "https://xlirwzkmvkzldrssmhxg.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsaXJ3emttdmt6bGRyc3NtaHhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDgwMTksImV4cCI6MjA5MTE4NDAxOX0.ofTAEn628a-7JzF3REPj-tBcQJUrlXdfaFSbU5Ysfx4"
-
-def _carregar_blocos_supabase():
-    import urllib.request
-    import urllib.parse
-    import json as _json
-
-    req = urllib.request.Request(
-        f"{SUPABASE_URL}/rest/v1/carregamentos"
-        f"?select=pedido,produto,pagador,destino,peso,status,data,placa"
-        f"&peso=gt.0&order=pedido.asc&limit=5000",
-        headers={
-            "apikey":        SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-        }
-    )
-    with urllib.request.urlopen(req, timeout=10) as r:
-        linhas = _json.loads(r.read().decode("utf-8"))
-
-    # Agrupa por pedido + produto + cliente
-    grupos = {}
-    ordem  = []
-    for l in linhas:
-        ped  = str(l.get("pedido", "") or "").strip().upper()
-        prod = str(l.get("produto", "") or "").strip().upper()
-        cli  = str(l.get("pagador", "") or "").strip().upper()
-        if not ped and not cli:
-            continue
-        key = f"{ped}||{prod}||{cli}"
-        if key not in grupos:
-            grupos[key] = {
-                "pedido":          ped,
-                "produto":         prod,
-                "cliente":         cli,
-                "cidade":          str(l.get("destino", "") or "").strip().upper(),
-                "destino":         str(l.get("destino", "") or "").strip().upper(),
-                "saldo_total":     0,
-                "total_carregado": 0,
-                "saldo_restante":  0,
-                "pct":             0,
-                "linhas":          [],
-            }
-            ordem.append(key)
-        try:
-            peso = float(l.get("peso") or 0)
-        except Exception:
-            peso = 0.0
-        grupos[key]["total_carregado"] += peso
-        grupos[key]["linhas"].append({
-            "dataStr": str(l.get("data") or "")[:10],
-            "placa":   str(l.get("placa") or "").strip().upper(),
-            "peso":    peso,
-            "status":  str(l.get("status") or "").strip().upper(),
-            "nota":    "",
-            "frete":   "",
-        })
-
-    # Busca saldo_total da planilha DADOS (aba PEDIDOS) se disponível,
-    # senão usa total_carregado como base (saldo_restante = 0 até atualizar)
-    for key in ordem:
-        g = grupos[key]
-        g["saldo_restante"] = g["saldo_total"] - g["total_carregado"]
-        g["pct"] = (g["total_carregado"] / g["saldo_total"] * 100) if g["saldo_total"] > 0 else 0
-
-    return [grupos[k] for k in ordem]
-
-def _sb_request(endpoint, method="GET", body=None):
-    import urllib.request, urllib.parse, json as _json
-    req = urllib.request.Request(
-        f"{SUPABASE_URL}/rest/v1/{endpoint}",
-        data=json.dumps(body).encode() if body else None,
-        headers={
-            "apikey":        SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type":  "application/json",
-            "Prefer":        "return=representation",
-        },
-        method=method
-    )
-    with urllib.request.urlopen(req, timeout=10) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-def _carregar_base_supabase(mes=None):
-    """Carrega carregamentos do Supabase. mes = 'MM/YYYY' para filtrar."""
-    import urllib.parse
-    filtros = ["peso=gt.0", "order=data.asc,id.asc", "limit=2000"]
-    if mes:
-        try:
-            m, y = mes.split("/")
-            import datetime as _dt
-            inicio = f"{y}-{m}-01"
-            ultimo = (_dt.date(int(y), int(m), 1).replace(day=28) +
-                      _dt.timedelta(days=4)).replace(day=1) - _dt.timedelta(days=1)
-            fim    = ultimo.strftime("%Y-%m-%d")
-            filtros += [f"data=gte.{inicio}", f"data=lte.{fim}"]
-        except Exception:
-            pass
-    qs   = "&".join(filtros)
-    rows = _sb_request(f"carregamentos?{qs}")
-    # Converte para lista de listas compatível com o _renderizar existente
-    # colunas visíveis: DATA(0) FILIAL(1) PAGADOR(2) MOTORISTA(3) PLACA(4)
-    #                   DESTINO(5) UF(6) PESO(7) STATUS(8) COLOCADOR(9) [id=19]
-    result = []
-    for r in rows:
-        data = str(r.get("data") or "")
-        if len(data) == 10:
-            data = f"{data[8:10]}/{data[5:7]}/{data[:4]}"
-        linha = [
-            data,                                    # 0  DATA
-            str(r.get("filial","") or ""),           # 1  FILIAL
-            str(r.get("pagador","") or ""),          # 2  PAGADOR
-            str(r.get("agencia","") or ""),          # 3  AGENCIA
-            str(r.get("motorista","") or ""),        # 4  MOTORISTA
-            str(r.get("placa","") or ""),            # 5  PLACA
-            str(r.get("fabrica","") or ""),          # 6  FABRICA
-            str(r.get("destino","") or ""),          # 7  DESTINO
-            str(r.get("uf","") or ""),               # 8  UF
-            str(r.get("peso","") or ""),             # 9  PESO
-            str(r.get("frete_emp","") or ""),        # 10 FRETE/E
-            str(r.get("frete_mot","") or ""),        # 11 FRETE/M
-            str(r.get("rota","") or ""),             # 12 ROTA
-            str(r.get("agenciamento","") or ""),     # 13 AGENCIAMENTO
-            str(r.get("status","") or ""),           # 14 STATUS
-            str(r.get("pedido","") or ""),           # 15 PEDIDO
-            str(r.get("produto","") or ""),          # 16 PRODUTO
-            str(r.get("embalagem","") or ""),        # 17 EMBALAGEM
-            str(r.get("colocador","") or ""),        # 18 COLOCADOR
-            r.get("id"),                             # 19 ID (chave Supabase)
-            str(r.get("pagamento","") or ""),        # 20 PAGAMENTO
-        ]
-        result.append(linha)
-    return result
-
-def _meses_supabase():
-    """Retorna lista de meses disponíveis no Supabase."""
-    rows = _sb_request("carregamentos?select=data&peso=gt.0&order=data.asc&limit=5000")
-    meses = set()
-    for r in rows:
-        d = str(r.get("data") or "")
-        if len(d) >= 7:
-            meses.add(f"{d[5:7]}/{d[:4]}")
-    return sorted(meses, key=lambda x: (x[3:], x[:2]))
-
-def _atualizar_supabase_linha(sb_id, campos):
-    """Atualiza campos de um registro no Supabase pelo id."""
-    _sb_request(f"carregamentos?id=eq.{sb_id}", method="PATCH", body=campos)
-
-def _deletar_supabase_linha(sb_id):
-    """Deleta um registro do Supabase pelo id."""
-    import urllib.request
-    req = urllib.request.Request(
-        f"{SUPABASE_URL}/rest/v1/carregamentos?id=eq.{sb_id}",
-        headers={
-            "apikey":        SUPABASE_KEY,
-            "Authorization": f"Bearer {SUPABASE_KEY}",
-        },
-        method="DELETE"
-    )
-    urllib.request.urlopen(req, timeout=10)
-from planilha import carregar_blocos_dados
+from planilha import carregar_blocos_dados, carregar_base
 
 BG       = "#0d1117"
 SURFACE  = "#161b22"
@@ -197,22 +35,6 @@ DIALOG_SS = f"""
         font-size: 13px;
     }}
     QLineEdit:focus, QTextEdit:focus {{ border-color: {ACCENT}; }}
-    QComboBox:focus {{ border-color: {ACCENT}; }}
-    QComboBox::drop-down {{ border: none; width: 20px; }}
-    QComboBox::down-arrow {{
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-top: 5px solid {MUTED};
-        width: 0; height: 0; margin-right: 6px;
-    }}
-    QComboBox QAbstractItemView {{
-        background-color: {SURFACE};
-        border: 1px solid {BORDER2};
-        color: {TEXT};
-        selection-background-color: {ACCENT}33;
-        selection-color: {TEXT};
-        outline: none;
-    }}
     QPushButton {{
         border-radius: 6px;
         padding: 9px 18px;
@@ -261,29 +83,6 @@ def make_combo(items):
     cb.setMinimumHeight(32)
     cb.setCompleter(QCompleter(items))
     cb.completer().setCaseSensitivity(Qt.CaseInsensitive)
-    cb.setStyleSheet(f"""
-        QComboBox {{
-            background: {SURFACE}; border: 1px solid {BORDER2};
-            border-radius: 6px; padding: 6px 10px;
-            color: {TEXT}; font-size: 12px;
-        }}
-        QComboBox:focus {{ border-color: {ACCENT}; }}
-        QComboBox::drop-down {{ border: none; width: 20px; }}
-        QComboBox::down-arrow {{
-            border-left: 4px solid transparent;
-            border-right: 4px solid transparent;
-            border-top: 5px solid {MUTED};
-            width: 0; height: 0; margin-right: 6px;
-        }}
-        QComboBox QAbstractItemView {{
-            background-color: {SURFACE};
-            border: 1px solid {BORDER2};
-            color: {TEXT};
-            selection-background-color: {ACCENT}33;
-            selection-color: {TEXT};
-            outline: none;
-        }}
-    """)
     return cb
 
 def make_date():
@@ -349,32 +148,32 @@ def _historico_path():
         return Path(sys.executable).parent / "historico.json"
     return Path(__file__).parent / "historico.json"
 
-def salvar_historico(dados, caminho_arquivo, conta=None, usuario=None, supabase_id=None):
+def salvar_historico(dados, caminho_arquivo, conta=None, usuario=None):
     path = _historico_path()
     try:
         historico = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
     except Exception:
         historico = []
 
-    # Normaliza empresa para formato canônico
-    _emp_raw = str(dados.get("empresa", "") or "")
-    _emp_norm = "Agrovia" if "AGRO" in _emp_raw.upper() else ("TopBrasil" if _emp_raw else "")
-
     registro = {
         "data_hora": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
         "usuario":   usuario or "",
         "motorista": dados.get("Motorista", ""),
         "placa":     dados.get("Cavalo", ""),
-        "empresa":   _emp_norm,
+        "empresa":   dados.get("empresa", ""),
         "arquivo":   caminho_arquivo,
-        "dados":       {k: v for k, v in dados.items() if not k.startswith("_")},
-        "supabase_id": supabase_id,
     }
     historico.insert(0, registro)
     historico = historico[:200]
     path.write_text(json.dumps(historico, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # gravar_historico_planilha removido — histórico mantido localmente
+    # Tenta gravar na planilha centralizada (não bloqueia se falhar)
+    if conta and conta != "(nenhuma conta)":
+        try:
+            from planilha import gravar_historico_planilha
+            gravar_historico_planilha(conta, registro)
+        except Exception:
+            pass
 
 def carregar_historico():
     path = _historico_path()
@@ -385,24 +184,59 @@ def carregar_historico():
     except Exception:
         return []
 
-def carregar_historico_supabase(limite=200):
-    """Carrega histórico de ordens direto do Supabase, ordenado do mais recente."""
+# ── Supabase ───────────────────────────────────────────────────────
+SUPABASE_URL = "https://xlirwzkmvkzldrssmhxg.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InhsaXJ3emttdmt6bGRyc3NtaHhnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2MDgwMTksImV4cCI6MjA5MTE4NDAxOX0.ofTAEn628a-7JzF3REPj-tBcQJUrlXdfaFSbU5Ysfx4"
+
+def _sb_request(endpoint, method="GET", body=None):
+    import urllib.request
+    req = urllib.request.Request(
+        f"{SUPABASE_URL}/rest/v1/{endpoint}",
+        data=json.dumps(body).encode() if body else None,
+        headers={
+            "apikey":        SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type":  "application/json",
+            "Prefer":        "return=representation",
+        },
+        method=method
+    )
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+def carregar_historico_supabase(limite=300):
     try:
-        req = __import__("urllib.request", fromlist=["Request"]).Request(
+        import urllib.request
+        req = urllib.request.Request(
             f"{SUPABASE_URL}/rest/v1/carregamentos"
-            f"?select=id,criado_em,data,filial,pagador,motorista,placa,fabrica,"
-            f"destino,uf,peso,status,pedido,produto,colocador,usuario,ativo,observacao"
+            f"?select=id,criado_em,data,filial,pagador,motorista,placa,"
+            f"destino,uf,peso,status,pedido,produto,embalagem,colocador,"
+            f"usuario,ativo,observacao,pagamento"
             f"&order=id.desc&limit={limite}",
             headers={
                 "apikey":        SUPABASE_KEY,
                 "Authorization": f"Bearer {SUPABASE_KEY}",
             }
         )
-        import urllib.request as _ureq
-        with _ureq.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read().decode("utf-8"))
     except Exception:
         return []
+
+def _atualizar_supabase_linha(sb_id, campos):
+    _sb_request(f"carregamentos?id=eq.{sb_id}", method="PATCH", body=campos)
+
+def _deletar_supabase_linha(sb_id):
+    import urllib.request
+    req = urllib.request.Request(
+        f"{SUPABASE_URL}/rest/v1/carregamentos?id=eq.{sb_id}",
+        headers={
+            "apikey":        SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+        },
+        method="DELETE"
+    )
+    urllib.request.urlopen(req, timeout=10)
 
 USUARIOS = {
     "FELIPE":   "Felipe Costa",
@@ -410,26 +244,6 @@ USUARIOS = {
     "ANA":      "Ana Souza",
     "RAFAEL":   "Rafael Lima",
 }
-
-def _contas_empresa_path():
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent / "contas_empresa.json"
-    return Path(__file__).parent / "contas_empresa.json"
-
-def carregar_contas_empresa():
-    """Retorna dict {empresa: conta_gmail}. Ex: {'Agrovia': 'agro@gmail.com'}"""
-    path = _contas_empresa_path()
-    if path.exists():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {}
-
-def salvar_contas_empresa(mapa):
-    path = _contas_empresa_path()
-    path.write_text(json.dumps(mapa, ensure_ascii=False, indent=2), encoding="utf-8")
-
 
 def _usuarios_path():
     if getattr(sys, "frozen", False):
@@ -459,14 +273,18 @@ class HistoricoWidget(QWidget):
         root.setContentsMargins(16, 16, 16, 16)
         root.setSpacing(10)
 
-        # ── Topo ──
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        # Topo com busca
         topo = QHBoxLayout()
         titulo = QLabel("HISTÓRICO DE ORDENS")
         titulo.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px; background: transparent;")
-
         self._inp_busca = QLineEdit()
         self._inp_busca.setPlaceholderText("Buscar motorista, placa, pedido, cliente...")
-        self._inp_busca.setFixedWidth(280)
+        self._inp_busca.setFixedWidth(300)
         self._inp_busca.setStyleSheet(f"""
             QLineEdit {{
                 background: {SURFACE}; border: 1px solid {BORDER2};
@@ -475,255 +293,281 @@ class HistoricoWidget(QWidget):
             QLineEdit:focus {{ border-color: {ACCENT}; }}
         """)
         self._inp_busca.textChanged.connect(self._filtrar)
-
-        btn_atualizar = QPushButton("↺  ATUALIZAR")
-        btn_atualizar.setStyleSheet(f"""
+        btn_att = QPushButton("↺  ATUALIZAR")
+        btn_att.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: 1px solid {BORDER2};
                 border-radius: 6px; color: {MUTED}; padding: 6px 12px; font-size: 12px;
             }}
             QPushButton:hover {{ color: {TEXT}; border-color: {ACCENT}; }}
         """)
-        btn_atualizar.clicked.connect(self.recarregar)
-        topo.addWidget(titulo)
-        topo.addStretch()
-        topo.addWidget(self._inp_busca)
-        topo.addWidget(btn_atualizar)
-        root.addLayout(topo)
+        btn_att.clicked.connect(self.recarregar)
+        topo.addWidget(titulo); topo.addStretch()
+        topo.addWidget(self._inp_busca); topo.addWidget(btn_att)
+        root.insertLayout(0, topo)
 
-        # ── Tabela ──
-        self._tabela = QTableWidget()
-        self._tabela.setStyleSheet(f"""
-            QTableWidget {{
-                background: {SURFACE}; border: 1px solid {BORDER};
-                border-radius: 8px; gridline-color: {BORDER};
-                color: {TEXT}; font-size: 11px;
-            }}
-            QTableWidget::item {{ padding: 6px 10px; }}
-            QTableWidget::item:selected {{ background: {ACCENT}22; color: {TEXT}; }}
-            QHeaderView::section {{
-                background: #1c2128; color: {MUTED}; font-size: 10px;
-                font-weight: 700; padding: 8px 10px; border: none;
-                border-bottom: 1px solid {BORDER}; border-right: 1px solid {BORDER};
-            }}
-            QScrollBar:vertical {{ background: {SURFACE}; width: 8px; }}
-            QScrollBar::handle:vertical {{ background: {BORDER2}; border-radius: 4px; }}
-        """)
-        self._tabela.setEditTriggers(QTableWidget.NoEditTriggers)
-        self._tabela.setSelectionBehavior(QTableWidget.SelectRows)
-        self._tabela.setAlternatingRowColors(False)
-        self._tabela.verticalHeader().setVisible(False)
-        self._tabela.horizontalHeader().setStretchLastSection(True)
-        self._tabela.setSortingEnabled(True)
+        self._container = QWidget()
+        self._container.setStyleSheet("background: transparent;")
+        self._vbox = QVBoxLayout(self._container)
+        self._vbox.setSpacing(6)
+        self._vbox.setContentsMargins(0, 0, 4, 0)
+        self._vbox.addStretch()
 
-        COLUNAS = ["#", "DATA/HORA", "EMPRESA", "MOTORISTA", "PLACA",
-                   "CLIENTE", "PEDIDO", "PRODUTO", "PESO", "DESTINO",
-                   "COLOCADOR", "STATUS", "USUÁRIO", "EDITAR"]
-        self._tabela.setColumnCount(len(COLUNAS))
-        self._tabela.setHorizontalHeaderLabels(COLUNAS)
-        larguras = [45, 115, 75, 140, 80, 130, 70, 150, 55, 110, 90, 100, 70, 60]
-        for i, w in enumerate(larguras):
-            self._tabela.setColumnWidth(i, w)
-        self._tabela.horizontalHeader().setStretchLastSection(False)
+        scroll.setWidget(self._container)
+        root.addWidget(scroll)
 
-        root.addWidget(self._tabela)
-        self._todos = []
+        self._todos_cards = []
         self.recarregar()
 
     def recarregar(self):
-        self._tabela.setSortingEnabled(False)
-        self._tabela.setRowCount(0)
-        # Tenta Supabase primeiro, fallback para JSON local
+        while self._vbox.count() > 1:
+            item = self._vbox.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._todos_cards = []
+
+        # Tenta Supabase, fallback local
         registros = carregar_historico_supabase()
-        if registros:
-            self._todos = registros
-            self._renderizar_supabase(registros)
-        else:
-            local = carregar_historico()
-            self._todos = local
-            self._renderizar_local(local)
-        self._tabela.setSortingEnabled(True)
+        fonte = "supabase"
+        if not registros:
+            registros = carregar_historico()
+            fonte = "local"
 
-    def _renderizar_supabase(self, registros):
-        STATUS_COR = {
-            "CARREGADO": "#1a3a1a", "PAGO": "#1a2a3a", "MARCADO": "#3a2a00",
-            "AGUARDANDO": "#1e2200", "DESCARGA": "#1a0a2a",
-            "CHEGA": "#0a1a2a", "A CAMINHO": "#0a1a2a",
-            "DESISTIU": "#3a0a0a", "ALTERADO": "#3a0a0a",
-        }
-        for r in registros:
-            row = self._tabela.rowCount()
-            self._tabela.insertRow(row)
-            self._tabela.setRowHeight(row, 26)
-
-            sb_id   = r.get("id", "")
-            filial  = str(r.get("filial", "") or "").upper()
-            empresa = "Agrovia" if "AGRO" in filial else "TopBrasil"
-            criado  = str(r.get("criado_em", "") or "")
-            if len(criado) >= 16:
-                try:
-                    import datetime as _dt
-                    dt_utc = _dt.datetime.strptime(criado[:19], "%Y-%m-%d %H:%M:%S")
-                    dt_brt = dt_utc - _dt.timedelta(hours=3)
-                    data_hora = dt_brt.strftime("%d/%m/%Y %H:%M")
-                except Exception:
-                    data_hora = criado[8:10]+"/"+criado[5:7]+"/"+criado[:4]+" "+criado[11:16]
-            else:
-                data_hora = str(r.get("data", "") or "")
-            status  = str(r.get("status", "") or "").upper()
-            ativo   = r.get("ativo", True)
-            inativo = (not ativo) or status in ("DESISTIU", "ALTERADO")
-            obs     = str(r.get("observacao", "") or "")
-            peso    = r.get("peso", "")
-            try: peso = f"{float(peso):.0f} t"
-            except: peso = str(peso)
-
-            cor_emp = ACCENT if empresa == "Agrovia" else DANGER
-            bg = QColor(STATUS_COR.get(status, "#161b22"))
-            fg = QColor("#f85149") if inativo else QColor(TEXT)
-
-            vals = [
-                str(sb_id), data_hora, empresa,
-                str(r.get("motorista","") or "").title(),
-                str(r.get("placa","") or ""),
-                str(r.get("pagador","") or ""),
-                str(r.get("pedido","") or ""),
-                str(r.get("produto","") or ""),
-                peso,
-                str(r.get("destino","") or ""),
-                str(r.get("colocador","") or ""),
-                status + (f" → {obs}" if obs and inativo else ""),
-                str(r.get("usuario","") or ""),
-                "EDITAR",
-            ]
-
-            for col, val in enumerate(vals):
-                item = QTableWidgetItem(val)
-                item.setTextAlignment(Qt.AlignCenter if col != 3 else Qt.AlignLeft | Qt.AlignVCenter)
-                item.setBackground(bg)
-                item.setForeground(fg)
-                if col == 2:  # empresa
-                    item.setForeground(QColor(cor_emp))
-                if col == 13:  # EDITAR
-                    item.setForeground(QColor("#e3b341"))
-                    item.setFont(QFont("Segoe UI", 8, QFont.Bold))
-                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                self._tabela.setItem(row, col, item)
-
-            # Guarda dados completos para edição
-            self._tabela.item(row, 0).setData(Qt.UserRole, r)
-
-        try:
-            self._tabela.itemClicked.disconnect()
-        except Exception:
-            pass
-        self._tabela.itemClicked.connect(self._on_click)
-
-    def _renderizar_local(self, registros):
-        for r in registros:
-            row = self._tabela.rowCount()
-            self._tabela.insertRow(row)
-            self._tabela.setRowHeight(row, 26)
-            empresa = r.get("empresa", "")
-            cor_emp = ACCENT if empresa == "Agrovia" else DANGER
-            dados   = r.get("dados", {})
-            vals = [
-                str(r.get("supabase_id","") or ""),
-                r.get("data_hora",""),
-                empresa,
-                r.get("motorista","—").title(),
-                r.get("placa","—"),
-                dados.get("Cliente","") or dados.get("Pagador",""),
-                dados.get("Pedido",""),
-                dados.get("Produto",""),
-                dados.get("Peso Total","") or dados.get("Peso",""),
-                dados.get("Destino",""),
-                dados.get("Colocador",""),
-                "",
-                r.get("usuario",""),
-                "EDITAR",
-            ]
-            for col, val in enumerate(vals):
-                item = QTableWidgetItem(str(val))
-                item.setTextAlignment(Qt.AlignCenter if col != 3 else Qt.AlignLeft | Qt.AlignVCenter)
-                if col == 2: item.setForeground(QColor(cor_emp))
-                if col == 13:
-                    item.setForeground(QColor("#e3b341"))
-                    item.setFont(QFont("Segoe UI", 8, QFont.Bold))
-                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                self._tabela.setItem(row, col, item)
-            self._tabela.item(row, 0).setData(Qt.UserRole, r)
-        try:
-            self._tabela.itemClicked.disconnect()
-        except Exception:
-            pass
-        self._tabela.itemClicked.connect(self._on_click)
-
-    def _filtrar(self, texto):
-        txt = texto.upper()
-        for row in range(self._tabela.rowCount()):
-            visivel = not txt or any(
-                txt in (self._tabela.item(row, c).text().upper() if self._tabela.item(row, c) else "")
-                for c in range(self._tabela.columnCount())
-            )
-            self._tabela.setRowHidden(row, not visivel)
-
-    def _on_click(self, item):
-        if item.column() == 13:
-            r = self._tabela.item(item.row(), 0).data(Qt.UserRole)
-            if r:
-                self._reeditar_ordem(r)
-
-    # _make_card substituído por tabela — não mais necessário
-
-    def _reeditar_ordem(self, registro):
-        """Carrega dados do histórico/Supabase no formulário para reeditar."""
-        # Suporte a registro do Supabase (tem 'motorista' direto) ou local (tem 'dados')
-        dados = registro.get("dados")
-        supabase_id = registro.get("supabase_id") or registro.get("id")
-
-        if not dados and not registro.get("motorista"):
-            QMessageBox.warning(self, "Aviso",
-                "Este registro nao possui dados suficientes para reeditar.")
+        if not registros:
+            vazio = QLabel("Nenhuma ordem gerada ainda.")
+            vazio.setAlignment(Qt.AlignCenter)
+            vazio.setStyleSheet(f"color: {MUTED}; font-size: 13px; background: transparent;")
+            self._vbox.insertWidget(0, vazio)
             return
 
-        # Se veio do Supabase sem dados completos, monta dados básicos
-        if not dados and registro.get("motorista"):
+        # Agrupar por data
+        grupos = {}
+        for r in registros:
+            if fonte == "supabase":
+                criado = str(r.get("criado_em","") or "")
+                try:
+                    import datetime as _dt
+                    dt = _dt.datetime.strptime(criado[:19], "%Y-%m-%d %H:%M:%S") - _dt.timedelta(hours=3)
+                    data = dt.strftime("%d/%m/%Y")
+                    r["_data_fmt"] = data
+                    r["_hora_fmt"] = dt.strftime("%H:%M")
+                except Exception:
+                    raw = str(r.get("data",""))
+                    if len(raw) == 10 and raw[4] == "-":
+                        data = raw[8:10]+"/"+raw[5:7]+"/"+raw[:4]
+                    else:
+                        data = raw
+                    r["_data_fmt"] = data
+                    r["_hora_fmt"] = ""
+            else:
+                data = r.get("data_hora","")[:10]
+                r["_data_fmt"] = data
+                r["_hora_fmt"] = r.get("data_hora","")[-5:]
+            grupos.setdefault(data, []).append(r)
+
+        for data, items in grupos.items():
+            lbl = QLabel(data)
+            lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px; font-weight: 700; letter-spacing: 1px; background: transparent; padding: 6px 0 2px 0;")
+            self._vbox.insertWidget(self._vbox.count() - 1, lbl)
+            for r in items:
+                card, frame = self._make_card(r, fonte)
+                self._todos_cards.append((r, frame))
+                self._vbox.insertWidget(self._vbox.count() - 1, frame)
+
+    def _filtrar(self, texto):
+        txt = texto.strip().upper()
+        for r, frame in self._todos_cards:
+            if not txt:
+                frame.setVisible(True)
+                continue
+            campos = [
+                str(r.get("motorista","") or r.get("Motorista","")),
+                str(r.get("placa","") or r.get("Cavalo","")),
+                str(r.get("pagador","") or r.get("Cliente","")),
+                str(r.get("pedido","") or r.get("Pedido","")),
+                str(r.get("destino","") or r.get("Destino","")),
+                str(r.get("colocador","") or r.get("Colocador","")),
+                str(r.get("id","") or r.get("supabase_id","")),
+            ]
+            frame.setVisible(any(txt in c.upper() for c in campos))
+
+    def _make_card(self, r, fonte="supabase"):
+        # Extrair campos compatíveis com Supabase e local
+        sb_id    = r.get("id") or r.get("supabase_id", "")
+        hora     = r.get("_hora_fmt", r.get("data_hora","")[-5:])
+        filial   = str(r.get("filial","") or "").upper()
+        empresa  = r.get("empresa","") or ("Agrovia" if "AGRO" in filial else "TopBrasil" if filial else "")
+        motorista_txt = str(r.get("motorista","") or r.get("dados",{}).get("Motorista","—") or "—").title()
+        placa_txt     = str(r.get("placa","")     or r.get("dados",{}).get("Cavalo","—")    or "—")
+        cliente_txt   = str(r.get("pagador","")   or r.get("dados",{}).get("Cliente","")   or "").upper()
+        pedido_txt    = str(r.get("pedido","")    or r.get("dados",{}).get("Pedido","")    or "")
+        destino_txt   = str(r.get("destino","")   or r.get("dados",{}).get("Destino","")   or "").upper()
+        colocador_txt = str(r.get("colocador","") or r.get("dados",{}).get("Colocador","") or "").upper()
+        status_txt    = str(r.get("status","")    or "").upper()
+        ativo         = r.get("ativo", True)
+        inativo       = (not ativo) or status_txt in ("DESISTIU","ALTERADO")
+        obs_txt       = str(r.get("observacao","") or "")
+
+        cor_emp   = ACCENT if "AGRO" in empresa.upper() else DANGER
+        cor_borda = BORDER2 if not inativo else "#f8514933"
+        bg_cor    = "#2a08082a" if inativo else SURFACE
+
+        frame = QFrame()
+        frame.setMinimumHeight(52)
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg_cor};
+                border: 1px solid {cor_borda};
+                border-radius: 8px;
+            }}
+        """)
+
+        h = QHBoxLayout(frame)
+        h.setContentsMargins(12, 8, 12, 8)
+        h.setSpacing(8)
+
+        # Número da ordem + hora
+        num_lbl = QLabel(f"#{sb_id}" if sb_id else "")
+        num_lbl.setStyleSheet(f"color: {ACCENT}; font-size: 12px; font-weight: 700; background: transparent; min-width: 48px;")
+        hora_lbl = QLabel(hora)
+        hora_lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent; min-width: 38px;")
+        num_col = QVBoxLayout(); num_col.setSpacing(1)
+        num_col.addWidget(num_lbl); num_col.addWidget(hora_lbl)
+
+        # Motorista + placa
+        mot_lbl = QLabel(motorista_txt)
+        mot_lbl.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 600; background: transparent;")
+        pla_lbl = QLabel(placa_txt)
+        pla_lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        mot_col = QVBoxLayout(); mot_col.setSpacing(1)
+        mot_col.addWidget(mot_lbl); mot_col.addWidget(pla_lbl)
+        # mot_col substituído por mot_w abaixo
+
+        def _info(label, valor, maxw=None):
+            w = QWidget()
+            w.setStyleSheet("background: transparent; border: none;")
+            if maxw: w.setMaximumWidth(maxw)
+            v = QVBoxLayout(w); v.setSpacing(0); v.setContentsMargins(0,0,0,0)
+            l = QLabel(label)
+            l.setStyleSheet(f"color: {MUTED}; font-size: 8px; font-weight: 700; letter-spacing: 0.5px; background: transparent;")
+            t = QLabel(str(valor or "—"))
+            t.setStyleSheet(f"color: {TEXT}; font-size: 11px; background: transparent;")
+            if maxw: t.setMaximumWidth(maxw - 4)
+            v.addWidget(l); v.addWidget(t)
+            return w
+
+        # Badge empresa
+        badge = QLabel(empresa.upper() if empresa else "—")
+        badge.setStyleSheet(f"""
+            color: {cor_emp}; background: transparent;
+            font-size: 10px; font-weight: 700; padding: 2px 4px;
+        """)
+
+        # Status badge
+        STATUS_CORES = {
+            "CARREGADO": "#3fb950","PAGO": "#58a6ff","MARCADO": "#e3b341",
+            "AGUARDANDO": "#8b949e","DESCARGA": "#bc8cff",
+            "CHEGA": "#79c0ff","A CAMINHO": "#79c0ff",
+            "DESISTIU": "#f85149","ALTERADO": "#f85149",
+        }
+        st_cor = STATUS_CORES.get(status_txt, MUTED)
+        if inativo and obs_txt:
+            st_txt = f"{status_txt}: {obs_txt}"
+        else:
+            st_txt = status_txt or "—"
+        st_badge = QLabel(st_txt)
+        st_badge.setStyleSheet(f"""
+            color: {st_cor}; background: transparent;
+            font-size: 10px; font-weight: 700; padding: 2px 4px;
+        """)
+        st_badge.setMaximumWidth(180)
+
+        # Botão editar
+        btn = QPushButton("EDITAR")
+        btn.setFixedHeight(28)
+        btn.setFixedWidth(80)
+        btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        btn.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: 1px solid #e3b341;
+                border-radius: 5px; color: #e3b341; font-weight: 700;
+                padding: 0px 8px;
+            }}
+            QPushButton:hover {{ background: #e3b34122; }}
+        """)
+        btn.clicked.connect(lambda _, reg=r: self._reeditar_ordem(reg))
+
+        usuario_txt = str(r.get("usuario","") or r.get("dados",{}).get("_usuario","") or "").upper()
+
+        mot_w = QWidget(); mot_w.setStyleSheet("background:transparent;")
+        mot_w.setMaximumWidth(180)
+        mot_v = QVBoxLayout(mot_w); mot_v.setSpacing(1); mot_v.setContentsMargins(0,0,0,0)
+        mot_v.addWidget(mot_lbl); mot_v.addWidget(pla_lbl)
+
+        h.addLayout(num_col)
+        h.addWidget(mot_w, 1)
+        h.addWidget(_info("CLIENTE",  cliente_txt, 140), 0)
+        h.addWidget(_info("PEDIDO",   pedido_txt,   70), 0)
+        h.addWidget(_info("DESTINO",  destino_txt, 120), 0)
+        h.addWidget(_info("USUARIO",  usuario_txt,  70), 0)
+        h.addStretch(1)
+        h.addWidget(badge)
+        h.addWidget(st_badge)
+        h.addSpacing(6)
+        h.addWidget(btn)
+
+        return r, frame
+
+    def _reeditar_ordem(self, r):
+        """Carrega dados no formulário para reeditar. Suporta Supabase e local."""
+        dados = r.get("dados")
+        sb_id = r.get("id") or r.get("supabase_id")
+
+        # Se veio do Supabase, monta dados básicos
+        if not dados and r.get("motorista"):
+            filial = str(r.get("filial","") or "").upper()
             dados = {
-                "empresa":          "Agrovia" if "AGRO" in str(registro.get("filial","")).upper() else "TopBrasil",
-                "Motorista":        str(registro.get("motorista","") or ""),
-                "Cavalo":           str(registro.get("placa","") or ""),
-                "Pagador":          str(registro.get("pagador","") or ""),
-                "Cliente":          str(registro.get("pagador","") or ""),
-                "Fábrica":          str(registro.get("fabrica","") or ""),
-                "Destino":          str(registro.get("destino","") or ""),
-                "UF":               str(registro.get("uf","") or ""),
-                "Pedido":           str(registro.get("pedido","") or ""),
-                "Produto":          str(registro.get("produto","") or ""),
-                "Embalagem":        str(registro.get("embalagem","") or ""),
-                "Colocador":        str(registro.get("colocador","") or ""),
-                "Pagamento":        str(registro.get("pagamento","") or ""),
-                "Peso Total":       str(registro.get("peso","") or ""),
+                "empresa":    "Agrovia" if "AGRO" in filial else "TopBrasil",
+                "Motorista":  str(r.get("motorista","") or ""),
+                "Cavalo":     str(r.get("placa","") or ""),
+                "Pagador":    str(r.get("pagador","") or ""),
+                "Cliente":    str(r.get("pagador","") or ""),
+                "Fábrica":    str(r.get("fabrica","") or ""),
+                "Destino":    str(r.get("destino","") or ""),
+                "UF":         str(r.get("uf","") or ""),
+                "Pedido":     str(r.get("pedido","") or ""),
+                "Produto":    str(r.get("produto","") or ""),
+                "Embalagem":  str(r.get("embalagem","") or ""),
+                "Colocador":  str(r.get("colocador","") or ""),
+                "Pagamento":  str(r.get("pagamento","") or ""),
+                "Peso Total": str(r.get("peso","") or ""),
             }
 
-        arquivo_antigo_xlsx = registro.get("arquivo", "")
-        arquivo_antigo_pdf  = arquivo_antigo_xlsx.replace(".xlsx", ".pdf") if arquivo_antigo_xlsx else ""
+        if not dados:
+            QMessageBox.warning(self, "Aviso",
+                "Este registro nao possui dados completos para reeditar.")
+            return
+
+        arquivo_antigo = r.get("arquivo","")
+        arquivo_xlsx   = arquivo_antigo if arquivo_antigo and arquivo_antigo.endswith(".xlsx") else ""
+        arquivo_pdf    = arquivo_xlsx.replace(".xlsx",".pdf") if arquivo_xlsx else ""
+
+        motorista = dados.get("Motorista","")
+        placa     = dados.get("Cavalo","")
 
         dlg = QDialog(self)
-        dlg.setWindowTitle("Reeditar Ordem")
-        dlg.setFixedSize(420, 200)
+        dlg.setWindowTitle("Editar Ordem")
+        dlg.setFixedSize(400, 170)
         dlg.setStyleSheet(DIALOG_SS)
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(24, 20, 24, 20)
         lay.setSpacing(12)
 
-        motorista = dados.get("Motorista", "")
-        placa     = dados.get("Cavalo", "")
-        lbl = QLabel(f"Reeditar ordem de <b>{motorista}</b> — placa <b>{placa}</b>")
+        lbl = QLabel(f"Editar ordem de <b>{motorista.title()}</b> — placa <b>{placa}</b>")
         lbl.setWordWrap(True)
         lay.addWidget(lbl)
-
-        lbl2 = QLabel("Os arquivos antigos (xlsx e pdf) serão deletados e novos gerados.")
+        lbl2 = QLabel("Uma nova ordem sera gerada e a anterior marcada como ALTERADO.")
         lbl2.setStyleSheet(f"color: #e3b341; font-size: 11px; background: transparent;")
         lbl2.setWordWrap(True)
         lay.addWidget(lbl2)
@@ -737,34 +581,24 @@ class HistoricoWidget(QWidget):
 
         def continuar():
             dlg.accept()
-            # Encontra a janela principal (UI) para navegar e preencher
             ui = None
             w = self.parent()
             while w:
                 if hasattr(w, "_nav") and hasattr(w, "_preencher_campos"):
-                    ui = w
-                    break
+                    ui = w; break
                 w = w.parent() if hasattr(w, "parent") else None
-
             if ui is None:
                 QMessageBox.warning(self, "Aviso", "Nao foi possivel navegar para o formulario.")
                 return
-
-            # Define empresa correta da ordem
-            empresa_ordem = dados.get("empresa", "")
-            if empresa_ordem and hasattr(ui, "_aplicar_empresa"):
-                ui._aplicar_empresa(empresa_ordem)
-            # Preenche formulário com dados da ordem antiga
+            empresa_ord = dados.get("empresa","")
+            if empresa_ord and hasattr(ui, "_aplicar_empresa"):
+                ui._aplicar_empresa(empresa_ord)
             ui._preencher_campos(dados)
-            # Navega para aba de geração de ordem
             ui._nav(0)
-            # Guarda id anterior para marcar como ALTERADO após gerar nova ordem
-            id_anterior = supabase_id or registro.get("supabase_id") or registro.get("id")
-            if id_anterior:
-                ui._reeditando_id_anterior = id_anterior
-            # Guarda caminhos antigos para deletar após gerar
-            if arquivo_antigo_xlsx:
-                ui._arquivos_para_deletar = [arquivo_antigo_xlsx, arquivo_antigo_pdf]
+            if sb_id:
+                ui._reeditando_id_anterior = sb_id
+            if arquivo_xlsx:
+                ui._arquivos_para_deletar = [arquivo_xlsx, arquivo_pdf]
 
         bo.clicked.connect(continuar)
         dlg.exec()
@@ -980,54 +814,6 @@ class PlanilhaWidget(QWidget):
         bo.clicked.connect(confirmar)
         dlg.exec()
 
-    def _remover_pedido(self, bloco):
-        conta = self._combo_conta.currentText()
-        if conta == "(nenhuma conta)":
-            return
-
-        cliente  = bloco.get("cliente", "")
-        pedido   = bloco.get("pedido", "")
-        produto  = bloco.get("produto", "")
-        n_carrs  = len(bloco.get("linhas", []))
-
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Remover Pedido")
-        msg.setIcon(QMessageBox.NoIcon)
-        msg.setText(
-            f"Deseja remover este pedido permanentemente?\n\n"
-            f"Cliente: {cliente}\n"
-            f"Pedido: {pedido}\n"
-            f"Produto: {produto}\n\n"
-            f"Isso também removerá {n_carrs} carregamento(s) vinculado(s)."
-        )
-        msg.setStyleSheet(f"""
-            QMessageBox {{ background-color: {BG}; }}
-            QLabel {{ color: {TEXT}; font-size: 13px; }}
-            QPushButton {{
-                border-radius: 6px; padding: 7px 18px;
-                font-weight: 700; font-size: 12px; min-width: 80px;
-            }}
-        """)
-        btn_sim = msg.addButton("REMOVER", QMessageBox.AcceptRole)
-        btn_sim.setStyleSheet(f"background-color: {DANGER}; color: white; border: none;")
-        btn_nao = msg.addButton("CANCELAR", QMessageBox.RejectRole)
-        btn_nao.setStyleSheet(f"background-color: transparent; border: 1px solid {BORDER2}; color: {MUTED};")
-        msg.exec()
-
-        if msg.clickedButton() != btn_sim:
-            return
-
-        try:
-            from planilha import remover_pedido_dados
-            resultado = remover_pedido_dados(conta, cliente, pedido, produto)
-            self._lbl_status.setText(
-                f"Pedido {pedido} removido — "
-                f"{resultado['carregamentos_removidos']} carregamento(s) excluído(s)"
-            )
-            self._carregar()
-        except Exception as e:
-            QMessageBox.critical(self, "Erro", str(e))
-
     def _novo_pedido(self):
         conta = self._combo_conta.currentText()
         if conta == "(nenhuma conta)":
@@ -1106,96 +892,33 @@ class PlanilhaWidget(QWidget):
             self._lbl_status.setText("Configure uma conta Gmail primeiro.")
             return
 
-        # ── 1. Busca abas disponíveis ──────────────────────────────
-        self._lbl_status.setText("Buscando abas disponíveis...")
-        QApplication.processEvents()
-        try:
-            from planilha import listar_abas_base, migrar_base_para_dados
-            import re as _re
-            todas = listar_abas_base(conta)
-            abas_base = [a for a in todas if _re.match(r"BASE\s+\d{2}/?\d{4}", a, _re.IGNORECASE)]
-            if not abas_base:
-                QMessageBox.warning(self, "Aviso", "Nenhuma aba BASE MM/AAAA encontrada na planilha.")
-                return
-        except Exception as e:
-            QMessageBox.critical(self, "Erro", str(e))
+        resp = QMessageBox.question(
+            self, "Migrar da BASE",
+            "Isso irá importar todos os carregamentos com PEDIDO preenchido "
+            "das abas BASE MM/AAAA para as abas PEDIDOS e DADOS.\n\n"
+            "Registros já existentes não serão duplicados.\n\n"
+            "Deseja continuar?",
+            QMessageBox.Yes | QMessageBox.No
+        )
+        if resp != QMessageBox.Yes:
             return
 
-        # ── 2. Diálogo de seleção de abas ─────────────────────────
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Selecionar abas para migrar")
-        dlg.setFixedWidth(340)
-        dlg.setStyleSheet(DIALOG_SS)
-
-        lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(20, 20, 20, 20)
-        lay.setSpacing(10)
-
-        lbl = QLabel("Selecione as abas que deseja migrar:")
-        lbl.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
-        lay.addWidget(lbl)
-
-        # Checkboxes — marca a mais recente por padrão
-        checks = []
-        for i, aba in enumerate(abas_base):
-            chk = QCheckBox(aba)
-            chk.setStyleSheet(f"color: {TEXT}; font-size: 12px; background: transparent;")
-            chk.setChecked(i == len(abas_base) - 1)  # marca a última (mais recente)
-            lay.addWidget(chk)
-            checks.append((chk, aba))
-
-        # Botões selecionar tudo / nenhum
-        sel_row = QHBoxLayout()
-        btn_todos   = QPushButton("Selecionar todas")
-        btn_nenhum  = QPushButton("Desmarcar todas")
-        for b in [btn_todos, btn_nenhum]:
-            b.setStyleSheet(f"QPushButton {{ background: transparent; border: 1px solid {BORDER2}; color: {MUTED}; border-radius: 4px; padding: 4px 8px; font-size: 10px; }} QPushButton:hover {{ color: {TEXT}; }}")
-        btn_todos.clicked.connect(lambda: [c.setChecked(True)  for c, _ in checks])
-        btn_nenhum.clicked.connect(lambda: [c.setChecked(False) for c, _ in checks])
-        sel_row.addWidget(btn_todos)
-        sel_row.addWidget(btn_nenhum)
-        lay.addLayout(sel_row)
-
-        btns = QHBoxLayout()
-        bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
-        bo = QPushButton("MIGRAR");   bo.setObjectName("btn_ok")
-        btns.addWidget(bc); btns.addWidget(bo)
-        lay.addLayout(btns)
-
-        abas_selecionadas = []
-
-        def confirmar():
-            selecionadas = [aba for chk, aba in checks if chk.isChecked()]
-            if not selecionadas:
-                QMessageBox.warning(dlg, "Atenção", "Selecione pelo menos uma aba.")
-                return
-            abas_selecionadas.extend(selecionadas)
-            dlg.accept()
-
-        bc.clicked.connect(dlg.reject)
-        bo.clicked.connect(confirmar)
-        if dlg.exec() != QDialog.Accepted or not abas_selecionadas:
-            return
-
-        # ── 3. Executa migração ────────────────────────────────────
         self._lbl_status.setText("Migrando... aguarde.")
         QApplication.processEvents()
 
         try:
+            from planilha import migrar_base_para_dados
+
             def progresso(msg):
                 self._lbl_status.setText(msg)
                 QApplication.processEvents()
 
-            resultado = migrar_base_para_dados(
-                conta,
-                abas_filtro=abas_selecionadas,
-                callback_progresso=progresso
-            )
+            resultado = migrar_base_para_dados(conta, callback_progresso=progresso)
 
-            abas_str = ", ".join(resultado["abas_lidas"])
+            abas = ", ".join(resultado["abas_lidas"])
             msg = (
                 f"Migração concluída!\n\n"
-                f"Abas lidas: {abas_str}\n"
+                f"Abas lidas: {abas}\n"
                 f"Total lido: {resultado['total_lido']} carregamento(s)\n"
                 f"Pedidos criados: {resultado['pedidos_criados']}\n"
                 f"Carregamentos migrados: {resultado['carregamentos_migrados']}\n\n"
@@ -1220,10 +943,16 @@ class PlanilhaWidget(QWidget):
             self._combo_conta.addItem("(nenhuma conta)")
 
     def _carregar(self):
-        self._lbl_status.setText("Carregando do banco de dados...")
+        conta = self._combo_conta.currentText()
+        if conta == "(nenhuma conta)":
+            self._lbl_status.setText("Configure uma conta Gmail primeiro.")
+            return
+
+        self._lbl_status.setText("Carregando...")
         QApplication.processEvents()
+
         try:
-            blocos = _carregar_blocos_supabase()
+            blocos = carregar_blocos_dados(conta)
             self._todos_blocos = blocos
             self._renderizar(blocos)
             self._lbl_status.setText(f"{len(blocos)} pedido(s) encontrado(s)")
@@ -1305,7 +1034,6 @@ class PlanilhaWidget(QWidget):
         h_lay.setSpacing(6)
 
         top = QHBoxLayout()
-        top.setSpacing(4)
         lbl_dest = QLabel(b["cliente"].upper())
         lbl_dest.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 700; background: transparent;")
         lbl_dest.setWordWrap(True)
@@ -1329,47 +1057,24 @@ class PlanilhaWidget(QWidget):
         p_s = QPalette(); p_s.setColor(QPalette.ButtonText, QColor("#58a6ff")); btn_saldo.setPalette(p_s)
         btn_saldo.clicked.connect(lambda _, bloco=b: self._ajustar_saldo(bloco))
 
-        # QLabel clicável — renderiza corretamente com background transparent no PySide6
-        class IconLabel(QLabel):
-            def __init__(self, texto, cor_normal, cor_hover, callback, parent=None):
-                super().__init__(texto, parent)
-                self._cor    = cor_normal
-                self._hover  = cor_hover
-                self._cb     = callback
-                self.setFixedSize(22, 22)
-                self.setAlignment(Qt.AlignCenter)
-                self.setCursor(Qt.PointingHandCursor)
-                self._aplicar(False)
-            def _aplicar(self, hover):
-                cor = self._hover if hover else self._cor
-                self.setStyleSheet(
-                    f"QLabel {{ background: transparent; border: none;"
-                    f" color: {cor}; font-size: 13px; }}"
-                )
-            def enterEvent(self, e):  self._aplicar(True)
-            def leaveEvent(self, e):  self._aplicar(False)
-            def mousePressEvent(self, e):
-                if e.button() == Qt.LeftButton:
-                    self._cb()
+        btn_expand = QPushButton("▶")
+        btn_expand.setFixedSize(22, 22)
+        btn_expand.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: none;
+                color: {MUTED}; font-size: 10px;
+            }}
+            QPushButton:hover {{ color: {TEXT}; }}
+        """)
 
-        bloco_ref = b
-        btn_remover = IconLabel("🗑", MUTED, DANGER,
-                                lambda b=bloco_ref: self._remover_pedido(b))
-        btn_remover.setToolTip("Remover pedido e todos os carregamentos")
-
-        btn_expand = IconLabel("▶", MUTED, TEXT, lambda: None)
         self._expand_btns.append(btn_expand)
         idx = len(self._expand_btns) - 1
 
         top.addWidget(lbl_dest, 1)
         top.addWidget(lbl_saldo)
         top.addWidget(btn_saldo)
-        top.addWidget(btn_remover)
         top.addWidget(btn_expand)
         h_lay.addLayout(top)
-
-        # callback preenchido depois que toggle() é definido
-        _expand_callbacks = [None]
 
         def info_row(label, valor):
             h = QHBoxLayout()
@@ -1481,18 +1186,16 @@ class PlanilhaWidget(QWidget):
             for j, btn in enumerate(self._expand_btns):
                 try:
                     btn.setText("▶")
-                    btn._aplicar(False)
                 except RuntimeError:
                     pass
             if not expanded:
                 try:
                     detalhe.setVisible(True)
                     self._expand_btns[my_idx].setText("▼")
-                    self._expand_btns[my_idx]._aplicar(False)
                 except RuntimeError:
                     pass
 
-        btn_expand._cb = toggle
+        btn_expand.clicked.connect(toggle)
         header.mousePressEvent = lambda e: toggle()
 
         return outer, detalhe
@@ -1525,12 +1228,11 @@ class BaseWidget(QWidget):
         titulo = QLabel("CONTROLE DE ORDENS")
         titulo.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px; background: transparent;")
 
-        # combo_conta mantido para compatibilidade com _on_sucesso
         self._combo_conta = QComboBox()
         self._combo_conta.setFixedWidth(210)
         self._combo_conta.setStyleSheet(COMBO_SS)
 
-        # Select de mês
+        # Select de mês/aba
         self._combo_mes = QComboBox()
         self._combo_mes.setFixedWidth(150)
         self._combo_mes.setStyleSheet(COMBO_SS)
@@ -1576,6 +1278,7 @@ class BaseWidget(QWidget):
         topo.addWidget(self._inp_busca)
         topo.addWidget(self._combo_mes)
         topo.addWidget(btn_abas)
+        topo.addWidget(self._combo_conta)
         topo.addWidget(btn_carregar)
         root.addLayout(topo)
 
@@ -1624,24 +1327,15 @@ class BaseWidget(QWidget):
         self._tabela.horizontalHeader().setStretchLastSection(True)
         self._tabela.setSortingEnabled(True)
 
-        # Ordem das colunas: STATUS primeiro, depois os demais
-        # índices na lista do Supabase:
-        # STATUS(14) DATA(0) FILIAL(1) PAGADOR(2) PEDIDO(15) PRODUTO(16)
-        # MOTORISTA(4) PLACA(5) DESTINO(7) UF(8) PESO(9) COLOCADOR(18)
-        # STATUS(14) DATA(0) FILIAL(1) PAGADOR(2) PEDIDO(15) PRODUTO(16)
-        # MOTORISTA(4) PLACA(5) DESTINO(7) UF(8) PESO(9)
-        # FRETE/E(10) FRETE/M(11) ROTA(12) AGENCIAMENTO(13) PAGAMENTO(20*) COLOCADOR(18)
-        # *PAGAMENTO não está na lista atual — adicionamos no índice 20 via _carregar_base_supabase
-        # índice 19 = ID Supabase (usado como número de ordem)
-        self._colunas_visiveis = [19, 14, 0, 1, 2, 15, 16, 4, 5, 7, 8, 9, 10, 11, 12, 13, 20, 18]
-        COLUNAS = ["#", "STATUS", "DATA", "FILIAL", "CLIENTE", "PEDIDO", "PRODUTO",
-                   "MOTORISTA", "PLACA", "DESTINO", "UF", "PESO",
-                   "FRT/E", "FRT/M", "ROTA", "AGENC.", "PAGAMENTO", "COLOCADOR", "", ""]
+        # Colunas visíveis: DATA(0), FILIAL(1), PAGADOR(2), MOTORISTA(4), PLACA(5),
+        #                   DESTINO(7), UF(8), PESO(9), STATUS(14)
+        self._colunas_visiveis = [0, 1, 2, 4, 5, 7, 8, 9, 14]
+        COLUNAS = ["DATA", "FILIAL", "PAGADOR", "MOTORISTA", "PLACA",
+                   "DESTINO", "UF", "PESO", "STATUS", "", ""]
         self._tabela.setColumnCount(len(COLUNAS))
         self._tabela.setHorizontalHeaderLabels(COLUNAS)
 
-        larguras = [40, 110, 82, 55, 110, 60, 130, 100, 75, 100, 35, 50,
-                    55, 55, 80, 70, 90, 80, 46, 46]
+        larguras = [90, 70, 130, 120, 90, 120, 40, 60, 110, 50, 50]
         for i, w in enumerate(larguras):
             self._tabela.setColumnWidth(i, w)
         self._tabela.horizontalHeader().setStretchLastSection(False)
@@ -1661,30 +1355,45 @@ class BaseWidget(QWidget):
         self._combo_conta.addItems(contas if contas else ["(nenhuma conta)"])
 
     def _atualizar_abas(self):
+        conta = self._combo_conta.currentText()
+        if conta == "(nenhuma conta)":
+            return
         try:
-            meses = _meses_supabase()
+            from planilha import listar_abas_base, _aba_mais_recente
+            abas = listar_abas_base(conta)
             self._combo_mes.clear()
-            self._combo_mes.addItems(meses)
-            if meses:
-                self._combo_mes.setCurrentIndex(len(meses) - 1)
+            self._combo_mes.addItems(abas)
+            # Seleciona a aba mais recente por padrão
+            mais_recente = _aba_mais_recente(abas)
+            idx = self._combo_mes.findText(mais_recente)
+            if idx >= 0:
+                self._combo_mes.setCurrentIndex(idx)
             self._aba_selecionada = self._combo_mes.currentText()
-            self._lbl_status.setText(f"{len(meses)} mes(es) disponível(is) no banco de dados")
+            self._lbl_status.setText(f"{len(abas)} aba(s) encontrada(s) — selecionado: {self._aba_selecionada}")
         except Exception as e:
-            self._lbl_status.setText(f"Erro ao listar meses: {e}")
+            self._lbl_status.setText(f"Erro ao listar abas: {e}")
 
     def _carregar(self):
-        mes = self._combo_mes.currentText().strip()
-        if not mes:
+        conta = self._combo_conta.currentText()
+        if conta == "(nenhuma conta)":
+            self._lbl_status.setText("Configure uma conta Gmail primeiro.")
+            return
+
+        # Usa aba do combo; se não carregou ainda, lista primeiro
+        aba = self._combo_mes.currentText().strip()
+        if not aba:
             self._atualizar_abas()
-            mes = self._combo_mes.currentText().strip()
-        self._aba_selecionada = mes
-        self._lbl_status.setText(f"Carregando {mes} do banco de dados...")
+            aba = self._combo_mes.currentText().strip()
+
+        self._aba_selecionada = aba
+        self._lbl_status.setText(f"Carregando {aba}...")
         QApplication.processEvents()
+
         try:
-            dados = _carregar_base_supabase(mes=mes)
+            dados = carregar_base(conta, aba=aba)
             self._todos_dados = dados
             self._renderizar(dados)
-            self._lbl_status.setText(f"{len(dados)} ordem(ns) em '{mes}'")
+            self._lbl_status.setText(f"{len(dados)} ordem(ns) em '{aba}'")
         except Exception as e:
             self._lbl_status.setText(f"Erro: {e}")
 
@@ -1716,8 +1425,8 @@ class BaseWidget(QWidget):
             self._tabela.insertRow(r)
             self._tabela.setRowHeight(r, 28)
 
-            if len(linha) > 19:
-                self._row_to_linha_planilha[r] = linha[19]
+            if len(linha) > 17:
+                self._row_to_linha_planilha[r] = linha[17]
 
             status = str(linha[14] if len(linha) > 14 else "").upper()
             if "CARREGADO" in status and "NÃO" not in status:
@@ -1728,12 +1437,6 @@ class BaseWidget(QWidget):
                 bg = QColor(COR_PAGO)
             elif "MARCADO" in status:
                 bg = QColor(COR_MARC)
-            elif "AGUARDANDO" in status:
-                bg = QColor("#1e2200")
-            elif "DESCARGA" in status:
-                bg = QColor("#1a0a2a")
-            elif "CHEGA" in status or "CAMINHO" in status:
-                bg = QColor("#0a1a2a")
             else:
                 bg = None
 
@@ -1745,8 +1448,8 @@ class BaseWidget(QWidget):
                     item.setBackground(bg)
                 self._tabela.setItem(r, col_tabela, item)
 
-            self._tabela.setItem(r, 18, self._make_btn_item("EDIT", "#e3b341"))
-            self._tabela.setItem(r, 19, self._make_btn_item("DEL",  "#da3633"))
+            self._tabela.setItem(r, 9,  self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(r, 10, self._make_btn_item("DEL",  "#da3633"))
 
         self._tabela.setSortingEnabled(True)
         try:
@@ -1768,58 +1471,58 @@ class BaseWidget(QWidget):
     def _on_item_click(self, item):
         col = item.column()
         row = item.row()
-        txt = item.text() if item else ""
-<<<<<<< Updated upstream
-        if col == 18:
-            if txt == "OK":
-                self._salvar_edicao(row)
-            else:  # EDIT
-                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(18)]
-                self._toggle_edicao(row, dados)
-        elif col == 19:
-=======
-        if col == 10:
-            if txt == "OK":
-                self._salvar_edicao(row)
-            else:  # EDIT
-                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(10)]
-                self._toggle_edicao(row, dados)
-        elif col == 11:
->>>>>>> Stashed changes
-            if txt == "✕":  # cancelar edição
-                self._linhas_editando.pop(row, None)
-                self._carregar()
-            else:  # DEL
-<<<<<<< Updated upstream
-                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(18)]
-=======
-                dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(10)]
->>>>>>> Stashed changes
-                self._deletar_linha(row, dados)
+        if col == 9:
+            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(9)]
+            self._toggle_edicao(row, dados)
+        elif col == 10:
+            dados = [self._tabela.item(row, c).text() if self._tabela.item(row, c) else "" for c in range(9)]
+            self._deletar_linha(row, dados)
 
     def _toggle_edicao(self, row, dados_orig):
         if row in self._linhas_editando:
-            self._salvar_edicao(row)
+            self._salvar_edicao(row, dados_orig)
             return
 
         self._linhas_editando[row] = dados_orig
         self._tabela.setRowHeight(row, 36)
 
-        STATUS_OPTS = ["AGUARDANDO", "MARCADO", "CHEGA", "A CAMINHO",
-                       "CARREGADO", "DESCARGA", "PAGO"]
+        STATUS_OPTS = ["MARCADO", "CHEGA", "CARREGADO", "AGUARDANDO", "DESCARGA"]
 
-        INP_SS = f"""
-            QLineEdit {{
-                background: #0d1117; border: none;
-                border-bottom: 2px solid {ACCENT};
-                color: {TEXT}; font-size: 11px; padding: 0px 4px;
-            }}
-        """
-        COMBO_SS = f"""
+        # Edita colunas 0-7 (DATA até PESO), STATUS fica como combo na col 8
+        for c in range(8):
+            val = str(dados_orig[c]) if c < len(dados_orig) else ""
+            inp = QLineEdit(val)
+            inp.setAlignment(Qt.AlignCenter)
+            inp.setFrame(False)
+            inp.setStyleSheet(f"""
+                QLineEdit {{
+                    background: #0d1117;
+                    border: none;
+                    border-bottom: 2px solid {ACCENT};
+                    color: {TEXT};
+                    font-size: 11px;
+                    padding: 0px 2px;
+                }}
+            """)
+            # Força maiúsculo ao digitar (exceto coluna de data)
+            if c != 0:
+                inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
+            self._tabela.setCellWidget(row, c, inp)
+
+        combo = QComboBox()
+        combo.addItems(STATUS_OPTS)
+        status_atual = str(dados_orig[8]) if len(dados_orig) > 8 else ""
+        idx = combo.findText(status_atual, Qt.MatchFixedString)
+        if idx >= 0:
+            combo.setCurrentIndex(idx)
+        combo.setStyleSheet(f"""
             QComboBox {{
-                background: #0d1117; border: none;
+                background: #0d1117;
+                border: none;
                 border-bottom: 2px solid {ACCENT};
-                color: {TEXT}; font-size: 11px; padding: 0px 2px;
+                color: {TEXT};
+                font-size: 11px;
+                padding: 0px 2px;
             }}
             QComboBox::drop-down {{ border: none; width: 16px; }}
             QComboBox::down-arrow {{
@@ -1828,227 +1531,129 @@ class BaseWidget(QWidget):
                 border-top: 4px solid {MUTED};
                 width: 0; height: 0; margin-right: 4px;
             }}
-            QComboBox QAbstractItemView {{
-                background: {SURFACE}; border: 1px solid {BORDER2};
-                color: {TEXT}; selection-background-color: {ACCENT}33;
-            }}
-        """
+        """)
+        self._tabela.setCellWidget(row, 8, combo)
 
-<<<<<<< Updated upstream
-        # col 0=# (não editável), col 1=STATUS(combo), cols 2-17=QLineEdit
-        # #(0) STATUS(1) DATA(2) FILIAL(3) CLIENTE(4) PEDIDO(5) PRODUTO(6)
-        # MOTORISTA(7) PLACA(8) DESTINO(9) UF(10) PESO(11)
-        # FRT/E(12) FRT/M(13) ROTA(14) AGENC.(15) PAGAMENTO(16) COLOCADOR(17)
-        for c in range(18):
-            val = self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""
-            if c == 0:  # # — não editável, mostra só o número
-                lbl = QLabel(val)
-                lbl.setAlignment(Qt.AlignCenter)
-                lbl.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
-                self._tabela.setCellWidget(row, c, lbl)
-                continue
-            if c == 1:  # STATUS — combo
-=======
-        # col 0-7 e 9 = QLineEdit, col 8 = QComboBox (STATUS)
-        for c in range(10):
-            val = self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""
-            if c == 8:  # STATUS — combo
->>>>>>> Stashed changes
-                combo = QComboBox()
-                combo.addItems(STATUS_OPTS)
-                combo.setStyleSheet(COMBO_SS)
-                idx = combo.findText(val, Qt.MatchFixedString)
-                combo.setCurrentIndex(idx if idx >= 0 else 0)
-                self._tabela.setCellWidget(row, c, combo)
-            else:
-                inp = QLineEdit(val)
-                inp.setAlignment(Qt.AlignCenter)
-                inp.setFrame(False)
-                inp.setStyleSheet(INP_SS)
-<<<<<<< Updated upstream
-                if c != 2:  # não força maiúsculo na data (col 2)
-                    inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
-                self._tabela.setCellWidget(row, c, inp)
+        self._tabela.setItem(row, 9, self._make_btn_item("OK", "#2ea043"))
 
-        # Botão OK na coluna 18, ✕ na 19
-        self._tabela.setItem(row, 18, self._make_btn_item("OK",  "#2ea043"))
-        self._tabela.setItem(row, 19, self._make_btn_item("✕", "#da3633"))
-=======
-                if c != 0:  # não força maiúsculo na data
-                    inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
-                self._tabela.setCellWidget(row, c, inp)
-
-        # Botão OK na coluna 10, DEL some temporariamente
-        self._tabela.setItem(row, 10, self._make_btn_item("OK",  "#2ea043"))
-        self._tabela.setItem(row, 11, self._make_btn_item("✕", "#da3633"))
->>>>>>> Stashed changes
-
-    def _salvar_edicao(self, row):
-        import datetime as _dt
-
-        sb_id = self._row_to_linha_planilha.get(row)
-        if not sb_id:
-            QMessageBox.warning(self, "Aviso", "ID do registro não encontrado no banco.")
-            return
-
-        # Coleta valores de todos os widgets editáveis
-<<<<<<< Updated upstream
-        # #(0-skip) STATUS(1) DATA(2) FILIAL(3) CLIENTE(4) PEDIDO(5) PRODUTO(6)
-        # MOTORISTA(7) PLACA(8) DESTINO(9) UF(10) PESO(11)
-        # FRT/E(12) FRT/M(13) ROTA(14) AGENC.(15) PAGAMENTO(16) COLOCADOR(17)
-        vals = {}
-        for c in range(18):
-=======
-        vals = {}
-        for c in range(10):
->>>>>>> Stashed changes
+    def _salvar_edicao(self, row, dados_orig):
+        conta = self._combo_conta.currentText()
+        novos_visiveis = []
+        for c in range(8):
             w = self._tabela.cellWidget(row, c)
-            if isinstance(w, QComboBox):
-                vals[c] = w.currentText()
-            elif isinstance(w, QLineEdit):
-                vals[c] = w.text().strip()
-            else:
-                item = self._tabela.item(row, c)
-                vals[c] = item.text() if item else ""
+            novos_visiveis.append(w.text() if isinstance(w, QLineEdit) else (self._tabela.item(row, c).text() if self._tabela.item(row, c) else ""))
+        combo = self._tabela.cellWidget(row, 8)
+        novos_visiveis.append(combo.currentText() if isinstance(combo, QComboBox) else "")
 
-<<<<<<< Updated upstream
-        STATUS_OPTS_COR = {
-            "CARREGADO": "#1a3a1a", "PAGO": "#1a2a3a",
-            "MARCADO": "#3a2a00",   "CHEGA": "#0a1a2a",
-            "AGUARDANDO": "#1e2200","DESCARGA": "#1a0a2a",
-            "A CAMINHO": "#0a1a2a",
-        }
+        # Mapeamento: índice visível → índice real na planilha
+        # visível: [0=DATA, 1=FILIAL, 2=PAGADOR, 3=MOTORISTA, 4=PLACA,
+        #           5=DESTINO, 6=UF, 7=PESO, 8=STATUS]
+        # planilha: [0=DATA,1=FILIAL,2=PAGADOR,3=AGENCIA,4=MOTORISTA,
+        #            5=PLACA,6=FABRICA,7=DESTINO,8=UF,9=PESO,
+        #            10=FRETE/E,11=FRETE/M,12=ROTA,13=AGENCIAMENTO,
+        #            14=STATUS,15=PEDIDO,16=PRODUTO]
+        VISIVEL_PARA_PLANILHA = {0: 0, 1: 1, 2: 2, 3: 4, 4: 5,
+                                  5: 7, 6: 8, 7: 9, 8: 14}
 
         try:
-            # #(0-skip) STATUS(1) DATA(2) FILIAL(3) CLIENTE(4) PEDIDO(5) PRODUTO(6)
-            # MOTORISTA(7) PLACA(8) DESTINO(9) UF(10) PESO(11)
-            # FRT/E(12) FRT/M(13) ROTA(14) AGENC.(15) PAGAMENTO(16) COLOCADOR(17)
-            campos = {
-                "status":       vals[1].upper(),
-                "filial":       vals[3].upper(),
-                "pagador":      vals[4].upper(),
-                "pedido":       vals[5].upper(),
-                "produto":      vals[6].upper(),
-                "motorista":    vals[7].upper(),
-                "placa":        vals[8].upper(),
-                "destino":      vals[9].upper(),
-                "uf":           vals[10].upper(),
-                "rota":         vals[14].upper(),
-                "agenciamento": vals[15].upper(),
-                "pagamento":    vals[16].upper(),
-                "colocador":    vals[17].upper(),
-=======
-        # col → campo Supabase
-        # 0=DATA, 1=FILIAL, 2=PAGADOR, 3=MOTORISTA, 4=PLACA,
-        # 5=DESTINO, 6=UF, 7=PESO, 8=STATUS, 9=COLOCADOR
-        STATUS_OPTS_COR = {
-            "CARREGADO": "#1a3a1a", "PAGO": "#1a2a3a",
-            "MARCADO": "#3a2a00",   "CHEGA": "#1a2a3a",
-            "AGUARDANDO": "#2a2a00","DESCARGA": "#2a1a3a",
-            "A CAMINHO": "#1a2030",
-        }
+            from planilha import atualizar_linha_base, carregar_base_com_linhas
+            num_linha = self._row_to_linha_planilha.get(row) or self._encontrar_linha_base(dados_orig, conta)
+            if not num_linha:
+                QMessageBox.warning(self, "Aviso", "Linha não encontrada na planilha.")
+                return
 
-        try:
-            campos = {
-                "filial":    vals[1].upper(),
-                "pagador":   vals[2].upper(),
-                "motorista": vals[3].upper(),
-                "placa":     vals[4].upper(),
-                "destino":   vals[5].upper(),
-                "uf":        vals[6].upper(),
-                "status":    vals[8].upper(),
-                "colocador": vals[9].upper(),
->>>>>>> Stashed changes
+            # Lê a linha atual completa da planilha para não perder colunas não visíveis
+            linhas = carregar_base_com_linhas(conta, aba=self._aba_selecionada)
+            linha_atual = None
+            for n, l in linhas:
+                if n == num_linha:
+                    linha_atual = list(l)
+                    break
+
+            if linha_atual is None:
+                QMessageBox.warning(self, "Aviso", "Linha não encontrada na planilha.")
+                return
+
+            # Garante tamanho mínimo de 17 colunas
+            while len(linha_atual) < 17:
+                linha_atual.append("")
+
+            # Aplica apenas as colunas editadas
+            for idx_visivel, idx_planilha in VISIVEL_PARA_PLANILHA.items():
+                linha_atual[idx_planilha] = novos_visiveis[idx_visivel]
+
+            atualizar_linha_base(conta, num_linha, linha_atual, aba=self._aba_selecionada)
+
+            STATUS_OPTS_COR = {
+                "CARREGADO": "#1a3a1a", "NÃO CARREGADO": "#3a1a1a",
+                "PAGO": "#1a2a3a", "MARCADO": "#3a2a00",
+                "CHEGA": "#1a2a3a", "AGUARDANDO": "#2a2a00",
+                "DESCARGA": "#2a1a3a",
             }
-            # Data: converte DD/MM/AAAA → AAAA-MM-DD
-            try:
-                campos["data"] = _dt.datetime.strptime(
-<<<<<<< Updated upstream
-                    vals[2].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
-            except Exception:
-                pass
-            # Peso: float
-            try:
-                campos["peso"]      = float(vals[11].replace(",", "."))
-            except Exception:
-                pass
-            try:
-                campos["frete_emp"] = float(vals[12].replace(",", "."))
-            except Exception:
-                pass
-            try:
-                campos["frete_mot"] = float(vals[13].replace(",", "."))
-=======
-                    vals[0].strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
->>>>>>> Stashed changes
-            except Exception:
-                pass
-            # Peso: float
-            try:
-                campos["peso"] = float(vals[7].replace(",", "."))
-            except Exception:
-                pass
-            # Remove vazios
-            campos = {k: v for k, v in campos.items() if v not in ("", None)}
+            status = novos_visiveis[8].upper()
+            bg = QColor(STATUS_OPTS_COR.get(status, "#161b22"))
 
-            _atualizar_supabase_linha(sb_id, campos)
-
-<<<<<<< Updated upstream
-            status  = campos.get("status", "")
-            bg_cor  = STATUS_OPTS_COR.get(status, "#161b22")
-            bg      = QColor(bg_cor)
-            novos   = [vals.get(c, "") for c in range(18)]
-
-            for c in range(18):
+            for c in range(9):
                 self._tabela.removeCellWidget(row, c)
-                item = QTableWidgetItem(str(novos[c]))
-=======
-            # Atualiza visual da linha
-            status  = campos.get("status", "")
-            bg_cor  = STATUS_OPTS_COR.get(status, "#161b22")
-            bg      = QColor(bg_cor)
-            novos   = [vals[c] for c in range(10)]
-
-            for c in range(10):
-                self._tabela.removeCellWidget(row, c)
-                item = QTableWidgetItem(novos[c])
->>>>>>> Stashed changes
+                item = QTableWidgetItem(novos_visiveis[c] if c < len(novos_visiveis) else "")
                 item.setTextAlignment(Qt.AlignCenter)
                 item.setBackground(bg)
                 self._tabela.setItem(row, c, item)
 
-<<<<<<< Updated upstream
-            self._tabela.setItem(row, 18, self._make_btn_item("EDIT", "#e3b341"))
-            self._tabela.setItem(row, 19, self._make_btn_item("DEL",  "#da3633"))
-=======
-            self._tabela.setItem(row, 10, self._make_btn_item("EDIT", "#e3b341"))
-            self._tabela.setItem(row, 11, self._make_btn_item("DEL",  "#da3633"))
->>>>>>> Stashed changes
+            self._tabela.setItem(row, 9,  self._make_btn_item("EDIT", "#e3b341"))
+            self._tabela.setItem(row, 10, self._make_btn_item("DEL",  "#da3633"))
+
             self._linhas_editando.pop(row, None)
             self._tabela.setRowHeight(row, 28)
-            self._lbl_status.setText("Registro atualizado no banco de dados.")
+            self._lbl_status.setText("Linha atualizada com sucesso.")
         except Exception as e:
-            QMessageBox.critical(self, "Erro ao salvar", str(e))
+            QMessageBox.critical(self, "Erro", str(e))
 
     def _deletar_linha(self, row, dados):
+        conta = self._combo_conta.currentText()
         resp = QMessageBox.question(
             self, "Confirmar",
-            "Deseja remover este registro do banco de dados?",
+            "Deseja remover esta linha da planilha BASE?\n\n"
+            "Se houver um carregamento correspondente na planilha de Pedidos (DADOS), "
+            "ele também será removido.",
             QMessageBox.Yes | QMessageBox.No
         )
         if resp != QMessageBox.Yes:
             return
         try:
-            sb_id = self._row_to_linha_planilha.get(row)
-            if sb_id:
-                _deletar_supabase_linha(sb_id)
+            from planilha import deletar_linha_base, carregar_base_com_linhas
+            num_linha = self._row_to_linha_planilha.get(row) or self._encontrar_linha_base(dados, conta)
+            if num_linha:
+                # Busca a linha completa para identificar o carregamento em DADOS
+                linha_completa = None
+                try:
+                    linhas = carregar_base_com_linhas(conta, aba=self._aba_selecionada)
+                    for n, l in linhas:
+                        if n == num_linha:
+                            linha_completa = l
+                            break
+                except Exception:
+                    pass
+                deletar_linha_base(
+                    conta, num_linha,
+                    aba=self._aba_selecionada,
+                    dados_linha=linha_completa
+                )
             self._tabela.removeRow(row)
-            self._lbl_status.setText("Registro removido do banco de dados.")
+            self._lbl_status.setText("Linha removida da BASE e dos Pedidos.")
         except Exception as e:
             QMessageBox.critical(self, "Erro", str(e))
 
     def _encontrar_linha_base(self, dados, conta):
-        # Não mais necessário — BASE usa Supabase com id direto
+        from planilha import carregar_base_com_linhas
+        try:
+            linhas = carregar_base_com_linhas(conta, aba=self._aba_selecionada)
+            chave = [str(dados[i]) if i < len(dados) else "" for i in range(4)]
+            for num_linha, linha in linhas:
+                if [str(linha[i]) if i < len(linha) else "" for i in range(4)] == chave:
+                    return num_linha
+        except Exception:
+            pass
         return None
 
 
@@ -2059,39 +1664,16 @@ ORIGENS_FABRICA = {
     "FERTIMAXI":        "FEIRA DE SANTANA - BA",
     "INTERMARITIMA":    "CANDEIAS - BA",
     "ARMAZEM VITORIA":  "CANDEIAS - BA",
-    "ARMAZEM VITÓRIA":  "CANDEIAS - BA",
-    "ARMAZÉM VITORIA":  "CANDEIAS - BA",
     "ARMAZÉM VITÓRIA":  "CANDEIAS - BA",
-    "AZ VITORIA":       "CANDEIAS - BA",
-    "AZ VITÓRIA":       "CANDEIAS - BA",
     "YARA":             "CANDEIAS - BA",
-    "UNIGEL":           "CAMAÇARI - BA",
-    # TIMAC tem duas unidades — tratado em _origem_por_fabrica
-    "TIMAC CANDEIAS":   "CANDEIAS - BA",
-    "TIMAC CAMACARI":   "CAMAÇARI - BA",
-    "TIMAC CAMAÇARI":   "CAMAÇARI - BA",
-    "TIMAC":            "CAMAÇARI - BA",  # fallback: sem localidade = Camaçari
+    "TIMAC":            "CAMAÇARI - BA",
 }
 
 def _origem_por_fabrica(fabrica):
-    """Retorna a origem fixa para uma fábrica, ou '' se não reconhecida.
-    Normaliza acentos para garantir match independente de grafia.
-    Para TIMAC: verifica se contém CANDEIAS antes de usar o fallback."""
-    import unicodedata
-    def _norm(s):
-        return unicodedata.normalize("NFD", s.upper().strip())                           .encode("ascii", "ignore").decode("ascii")
-    t = _norm(fabrica)
-
-    # TIMAC: verifica localidade específica primeiro
-    if "TIMAC" in t:
-        if "CANDEIAS" in t:
-            return "CANDEIAS - BA"
-        return "CAMAÇARI - BA"
-
+    """Retorna a origem fixa para uma fábrica, ou '' se não reconhecida."""
+    t = fabrica.upper().strip()
     for chave, origem in ORIGENS_FABRICA.items():
-        if "TIMAC" in _norm(chave):
-            continue  # já tratado acima
-        if _norm(chave) in t:
+        if chave in t:
             return origem
     return ""
 
@@ -2100,55 +1682,47 @@ def parsear_mensagem_whatsapp(texto):
     resultado = {}
 
     def extrair(chave):
-        match = re.search(rf"^{chave}\s*:\s*([^\n\r]*)", texto, re.IGNORECASE | re.MULTILINE)
-        val = match.group(1).strip() if match else ""
-        # Se o valor capturado começa com outra chave de campo (ex: "PAGAMENTO: 90/10"),
-        # significa que o campo estava vazio — descarta
-        if val and re.match(r"^[A-ZÀ-ÿ/]+\s*:", val, re.IGNORECASE):
-            val = ""
-        return val
+        match = re.search(rf"^{chave}\s*:\s*(.+)", texto, re.IGNORECASE | re.MULTILINE)
+        return match.group(1).strip() if match else ""
 
     filial = extrair("FILIAL").upper()
     resultado["empresa"] = "Agrovia" if "AGRO" in filial else "TopBrasil"
 
-    # ── PAGADOR / SOLICITANTE / CLIENTE ──────────────────────────────
+    # ── PAGADOR e CLIENTE ────────────────────────────────────────────
     # Regras:
-    # - PAGADOR → campo Pagador
-    # - SOLICITANTE → campo Solicitante
-    # - CLIENTE → campo Cliente
-    # - PAGADOR/CLIENTE na mesma linha → preenche Pagador E Cliente com mesmo valor
-    # - Cada campo preenchido apenas com o que vier na tag — sem cópias automáticas
+    # - PAGADOR → Solicitante (quem paga o frete)
+    # - CLIENTE → Cliente (destinatário da mercadoria)
+    # - Se a tag tiver PAGADOR e CLIENTE na mesma linha (ex: "PAGADOR/CLIENTE: NOME"),
+    #   ambos recebem o mesmo valor
+    # - Se só PAGADOR existir (sem CLIENTE), PAGADOR vai para Solicitante apenas
+    # - Se só CLIENTE existir (sem PAGADOR), vai para Cliente apenas
 
-    pagador     = extrair("PAGADOR")
-    solicitante = extrair("SOLICITANTE")
-    cliente     = extrair("CLIENTE")
+    pagador = extrair("PAGADOR")
+    cliente = extrair("CLIENTE")
 
-    # Verifica se PAGADOR e CLIENTE estão na mesma linha (ex: PAGADOR/CLIENTE: NOME)
+    # Verifica se PAGADOR e CLIENTE estão na mesma linha da tag
     match_mesmo = re.search(
-        r"^(PAGADOR|CLIENTE)\s*/\s*(PAGADOR|CLIENTE)\s*:\s*([^\n\r]*)",
+        r"^(PAGADOR|CLIENTE)\s*/\s*(PAGADOR|CLIENTE)\s*:\s*(.+)",
         texto, re.IGNORECASE | re.MULTILINE
     )
     if match_mesmo:
+        # Mesma linha — preenche ambos com o mesmo valor
         valor_comum = match_mesmo.group(3).strip()
-        # Verifica se o valor é outra chave de campo e descarta se for
-        if not re.match(r"^[A-Z\u00C0-\u00FF/]+\s*:", valor_comum, re.IGNORECASE):
-            resultado["Pagador"] = valor_comum
-            resultado["Cliente"] = valor_comum
+        resultado["Solicitante"] = valor_comum
+        resultado["Cliente"]     = valor_comum
     else:
         if pagador:
-            resultado["Pagador"] = pagador
+            resultado["Solicitante"] = pagador
         if cliente:
             resultado["Cliente"] = cliente
-
-    if solicitante:
-        resultado["Solicitante"] = solicitante
 
     # ── FÁBRICA e ORIGEM ─────────────────────────────────────────────
     # Origem é sempre definida pela fábrica (fixa por regra)
     # Nunca sobrescreve com o texto livre da tag
     fabrica = extrair("FABRICA")
     if fabrica:
-        resultado["Fábrica"] = fabrica.strip().upper()
+        # Guarda apenas o primeiro token como nome da fábrica no campo
+        resultado["Fábrica"] = fabrica.upper().split()[0]
         origem_fixa = _origem_por_fabrica(fabrica)
         if origem_fixa:
             resultado["Origem"] = origem_fixa
@@ -2175,77 +1749,64 @@ def parsear_mensagem_whatsapp(texto):
     if rota:
         resultado["Rota"] = rota
 
-    # Agenciamento: sempre define no resultado (pode ser vazio) para limpar campo
     agenciamento = extrair("AGENCIAMENTO")
-    resultado["Agenciamento"] = agenciamento  # vazio se não preenchido na tag
+    if agenciamento:
+        resultado["Agenciamento"] = agenciamento
 
-    colocador = extrair("COLOCADOR")
-    if colocador:
-        resultado["Colocador"] = colocador
-
-    pagamento = extrair("PAGAMENTO")
-    if pagamento:
-        resultado["Pagamento"] = pagamento
-
-    # UF já extraído junto com Destino acima
+    uf_campo = extrair("UF").upper()
+    if uf_campo:
+        resultado["UF"] = uf_campo
 
     produto = extrair("PRODUTO")
 
-    # Tenta extrair EMBALAGEM como campo separado da tag
-    embalagem_tag = extrair("EMBALAGEM")
-    if embalagem_tag:
-        resultado["Produto"]   = produto.strip()
-        resultado["Embalagem"] = embalagem_tag.strip().upper()
-    else:
-        # Fallback: detecta embalagem dentro do texto do produto
-        embalagem = ""
-        prod_upper = produto.upper()
-        EMBALAGENS_MAP = [
-            ("BIG BAG",    "BIG BAG"),
-            ("GRANEL",     "GRANEL"),
-            ("PALETIZADO", "PALETIZADO"),
-            ("SACO 50KG",  "SACO 50KG"),
-            ("SACO 50",    "SACO 50KG"),
-            ("SACO 25KG",  "SACO 25KG"),
-            ("SACO 25",    "SACO 25KG"),
-            ("SACO 40KG",  "SACO 40KG"),
-            ("SACO 40",    "SACO 40KG"),
-        ]
-        produto_limpo = produto
-        for token, emb_label in EMBALAGENS_MAP:
-            if token in prod_upper:
-                embalagem = emb_label
-                import re as _re
-                produto_limpo = _re.sub(
-                    r"[-–\s]*" + _re.escape(token) + r"[-–\s]*",
-                    " ", produto, flags=_re.IGNORECASE
-                ).strip(" -–")
-                break
-        resultado["Produto"] = produto_limpo
-        if embalagem:
-            resultado["Embalagem"] = embalagem
+    # Detecta embalagem no texto do produto e remove do nome do produto
+    embalagem = ""
+    prod_upper = produto.upper()
+    EMBALAGENS_MAP = [
+        ("BIG BAG",     "BIG BAG"),
+        ("GRANEL",      "GRANEL"),
+        ("PALETIZADO",  "PALETIZADO"),
+        ("SACO 50KG",   "SACO 50KG"),
+        ("SACO 50",     "SACO 50KG"),
+        ("SACO 25KG",   "SACO 25KG"),
+        ("SACO 25",     "SACO 25KG"),
+        ("SACO 40KG",   "SACO 40KG"),
+        ("SACO 40",     "SACO 40KG"),
+    ]
+    produto_limpo = produto
+    for token, emb_label in EMBALAGENS_MAP:
+        if token in prod_upper:
+            embalagem = emb_label
+            # Remove o token do nome do produto (case-insensitive) e limpa espaços/hífens sobrando
+            produto_limpo = re.sub(
+                rf"[-–\s]*{re.escape(token)}[-–\s]*",
+                " ", produto, flags=re.IGNORECASE
+            ).strip(" -–")
+            break
+
+    resultado["Produto"] = produto_limpo
+    if embalagem:
+        resultado["Embalagem"] = embalagem
 
     destino_raw = extrair("DESTINO")
     uf = extrair("UF").upper()
+    if destino_raw and uf:
+        destino_completo = f"{destino_raw.strip()} - {uf}"
+    elif destino_raw:
+        destino_completo = destino_raw.strip()
+    else:
+        destino_completo = ""
 
-    # UF sempre separado — vai para campo próprio
-    if uf:
-        resultado["UF"] = uf
-
-    # Destino: só a cidade, sem UF concatenado
-    destino_limpo = destino_raw.strip() if destino_raw else ""
-
-    if destino_limpo:
-        sep = re.split(r"\s+(FAZ\.?\s|FAZENDA\s|SITIO\s|SÍTIO\s|CHACARA\s)", destino_limpo, flags=re.IGNORECASE)
+    if destino_completo:
+        sep = re.split(r"\s+(FAZ\.?\s|FAZENDA\s|SITIO\s|SÍTIO\s|CHACARA\s)", destino_completo, flags=re.IGNORECASE)
         if len(sep) >= 3:
             resultado["Destino"] = sep[0].strip()
             resultado["Fazenda"] = (sep[1] + sep[2]).strip()
         else:
-            resultado["Destino"] = destino_limpo
+            resultado["Destino"] = destino_completo
             resultado["Fazenda"] = ""
     else:
-        resultado["Destino"] = resultado.get("Destino", "")
-        resultado["Fazenda"] = resultado.get("Fazenda", "")
+        resultado["Destino"] = resultado["Fazenda"] = ""
 
     fazenda = extrair("FAZENDA")
     if fazenda:
@@ -2336,206 +1897,6 @@ class LoadingOverlay(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor(13, 17, 23, 220))
-
-class ConfigWidget(QWidget):
-    """Aba de configurações — gerenciador de contas Gmail e mapeamento empresa→conta."""
-
-    def __init__(self):
-        super().__init__()
-        self.setStyleSheet("background: transparent;")
-        root = QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 20)
-        root.setSpacing(16)
-
-        titulo = QLabel("CONFIGURAÇÕES")
-        titulo.setStyleSheet(f"color: {TEXT}; font-size: 16px; font-weight: 700; letter-spacing: 1px; background: transparent;")
-        root.addWidget(titulo)
-
-        # ── Card: Contas Gmail ───────────────────────────────────
-        card_contas, body_contas = make_card("Contas Gmail")
-        v_contas = QVBoxLayout(body_contas)
-        v_contas.setSpacing(8)
-        v_contas.setContentsMargins(0, 0, 0, 0)
-
-        self._list_contas = QListWidget()
-        self._list_contas.setMinimumHeight(140)
-        self._list_contas.setStyleSheet(f"""
-            QListWidget {{
-                background: {BG}; border: 1px solid {BORDER};
-                border-radius: 6px; color: {TEXT};
-                font-size: 12px; padding: 4px;
-            }}
-            QListWidget::item {{ padding: 6px 8px; border-radius: 4px; }}
-            QListWidget::item:selected {{ background: {ACCENT}22; color: {ACCENT}; }}
-            QListWidget::item:hover {{ background: {BORDER}44; }}
-        """)
-        v_contas.addWidget(self._list_contas)
-
-        btn_row = QHBoxLayout()
-        btn_add = QPushButton("+ Adicionar conta Gmail")
-        btn_add.setStyleSheet(f"""
-            QPushButton {{
-                background: {ACCENT}; color: white; border: none;
-                border-radius: 6px; padding: 7px 14px; font-weight: 700; font-size: 11px;
-            }}
-            QPushButton:hover {{ background: {ACCENT_H}; }}
-        """)
-        btn_rem = QPushButton("🗑  Remover selecionada")
-        btn_rem.setStyleSheet(f"""
-            QPushButton {{
-                background: transparent; color: {DANGER};
-                border: 1px solid {DANGER}; border-radius: 6px;
-                padding: 7px 14px; font-weight: 700; font-size: 11px;
-            }}
-            QPushButton:hover {{ background: {DANGER}18; }}
-        """)
-        btn_row.addWidget(btn_add)
-        btn_row.addWidget(btn_rem)
-        btn_row.addStretch()
-        v_contas.addLayout(btn_row)
-
-        self._lbl_contas = QLabel("")
-        self._lbl_contas.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
-        v_contas.addWidget(self._lbl_contas)
-        root.addWidget(card_contas)
-
-        # ── Card: Conta padrão por empresa ───────────────────────
-        card_emp, body_emp = make_card("Conta padrão por empresa")
-        v_emp = QVBoxLayout(body_emp)
-        v_emp.setSpacing(10)
-        v_emp.setContentsMargins(0, 0, 0, 0)
-
-        descr = QLabel("Define qual conta Gmail é usada automaticamente ao gerar ordem para cada empresa.")
-        descr.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
-        descr.setWordWrap(True)
-        v_emp.addWidget(descr)
-
-        self._combos_empresa = {}
-        for empresa in ["Agrovia", "TopBrasil"]:
-            row = QHBoxLayout()
-            lbl = QLabel(empresa)
-            lbl.setFixedWidth(100)
-            lbl.setStyleSheet(f"color: {TEXT}; font-size: 12px; font-weight: 600; background: transparent;")
-            combo = QComboBox()
-            combo.setMinimumHeight(32)
-            combo.setStyleSheet(f"""
-                QComboBox {{
-                    background: {BG}; border: 1px solid {BORDER};
-                    border-radius: 6px; color: {TEXT}; padding: 4px 8px; font-size: 11px;
-                }}
-                QComboBox:focus {{ border-color: {ACCENT}; }}
-                QComboBox QAbstractItemView {{
-                    background: {SURFACE}; color: {TEXT};
-                    border: 1px solid {BORDER}; selection-background-color: {ACCENT}22;
-                }}
-            """)
-            self._combos_empresa[empresa] = combo
-            btn_limpar = QPushButton("✕")
-            btn_limpar.setFixedSize(28, 28)
-            btn_limpar.setToolTip(f"Remover vínculo de {empresa}")
-            btn_limpar.setStyleSheet(f"""
-                QPushButton {{ background: transparent; border: none; color: {MUTED}; font-size: 12px; }}
-                QPushButton:hover {{ color: {DANGER}; }}
-            """)
-            btn_limpar.clicked.connect(lambda _, e=empresa: self._limpar_empresa(e))
-            row.addWidget(lbl)
-            row.addWidget(combo, 1)
-            row.addWidget(btn_limpar)
-            v_emp.addLayout(row)
-
-        btn_salvar_emp = QPushButton("SALVAR VÍNCULOS")
-        btn_salvar_emp.setStyleSheet(f"""
-            QPushButton {{
-                background: {ACCENT}; color: white; border: none;
-                border-radius: 6px; padding: 7px 18px; font-weight: 700; font-size: 11px;
-            }}
-            QPushButton:hover {{ background: {ACCENT_H}; }}
-        """)
-        btn_salvar_emp.clicked.connect(self._salvar_vinculos)
-        v_emp.addWidget(btn_salvar_emp, alignment=Qt.AlignLeft)
-
-        self._lbl_emp = QLabel("")
-        self._lbl_emp.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
-        v_emp.addWidget(self._lbl_emp)
-        root.addWidget(card_emp)
-        root.addStretch()
-
-        btn_add.clicked.connect(self._adicionar_conta)
-        btn_rem.clicked.connect(self._remover_conta)
-
-    def _carregar(self):
-        contas = _listar_contas_gmail()
-        self._list_contas.clear()
-        for c in contas:
-            item = QListWidgetItem(c)
-            self._list_contas.addItem(item)
-        self._lbl_contas.setText(f"{len(contas)} conta(s) configurada(s)")
-
-        mapa = carregar_contas_empresa()
-        for empresa, combo in self._combos_empresa.items():
-            combo.clear()
-            combo.addItem("(nenhuma — perguntar sempre)")
-            combo.addItems(contas)
-            conta_atual = mapa.get(empresa, "")
-            if conta_atual:
-                idx = combo.findText(conta_atual)
-                if idx >= 0:
-                    combo.setCurrentIndex(idx)
-
-    def _adicionar_conta(self):
-        try:
-            novo = adicionar_conta_gmail()
-            self._lbl_contas.setText(f"✓  Conta {novo} adicionada com sucesso.")
-            self._carregar()
-        except Exception as e:
-            QMessageBox.critical(self, "Erro", str(e))
-
-    def _remover_conta(self):
-        item = self._list_contas.currentItem()
-        if not item:
-            QMessageBox.warning(self, "Atenção", "Selecione uma conta para remover.")
-            return
-        conta = item.text()
-        resp = QMessageBox.question(
-            self, "Remover conta",
-            f"Remover a conta {conta}?\n\nO arquivo de token será excluído.",
-            QMessageBox.Yes | QMessageBox.No
-        )
-        if resp != QMessageBox.Yes:
-            return
-        try:
-            import os
-            token = os.path.join("gmail_tokens", f"token_{conta}.json")
-            if os.path.exists(token):
-                os.remove(token)
-            mapa = carregar_contas_empresa()
-            for emp in list(mapa.keys()):
-                if mapa[emp] == conta:
-                    del mapa[emp]
-            salvar_contas_empresa(mapa)
-            self._lbl_contas.setText(f"Conta {conta} removida.")
-            self._carregar()
-        except Exception as e:
-            QMessageBox.critical(self, "Erro", str(e))
-
-    def _salvar_vinculos(self):
-        mapa = carregar_contas_empresa()
-        for empresa, combo in self._combos_empresa.items():
-            val = combo.currentText()
-            if val.startswith("(nenhuma"):
-                mapa.pop(empresa, None)
-            else:
-                mapa[empresa] = val
-        salvar_contas_empresa(mapa)
-        self._lbl_emp.setText("✓  Vínculos salvos com sucesso.")
-
-    def _limpar_empresa(self, empresa):
-        self._combos_empresa[empresa].setCurrentIndex(0)
-        mapa = carregar_contas_empresa()
-        mapa.pop(empresa, None)
-        salvar_contas_empresa(mapa)
-        self._lbl_emp.setText(f"Vínculo de {empresa} removido.")
-
 
 class UI(QWidget):
     def __init__(self):
@@ -2712,8 +2073,8 @@ class UI(QWidget):
         self._nav_btns = []
         self._nav_btns.append(make_nav_btn("📋", "Gerar Ordem", 0))
         self._nav_btns.append(make_nav_btn("🕐", "Histórico", 1))
-        self._nav_btns.append(make_nav_btn("📊", "Controle de Ordens", 2))
-        self._nav_btns.append(make_nav_btn("⚙", "Configurações", 3))
+        self._nav_btns.append(make_nav_btn("📦", "Controle de Pedidos", 2))
+        self._nav_btns.append(make_nav_btn("📊", "Controle de Ordens", 3))
         self._nav_btns[0].setChecked(True)
 
         for b in self._nav_btns:
@@ -2729,11 +2090,10 @@ class UI(QWidget):
         self._stack.addWidget(self._build_pagina_ordem())
         self._historico_widget = HistoricoWidget()
         self._stack.addWidget(self._historico_widget)
-        self._planilha_widget = None  # removido
+        self._planilha_widget = PlanilhaWidget()
+        self._stack.addWidget(self._planilha_widget)
         self._base_widget = BaseWidget()
         self._stack.addWidget(self._base_widget)
-        self._config_widget = ConfigWidget()
-        self._stack.addWidget(self._config_widget)
 
         root.addWidget(self._stack, 1)
 
@@ -2744,9 +2104,9 @@ class UI(QWidget):
         if idx == 1:
             self._historico_widget.recarregar()
         if idx == 2:
-            self._base_widget._atualizar_contas()
+            self._planilha_widget._atualizar_contas()
         if idx == 3:
-            self._config_widget._carregar()
+            self._base_widget._atualizar_contas()
 
     def _build_pagina_ordem(self):
         pagina = QWidget()
@@ -2826,13 +2186,11 @@ class UI(QWidget):
 
         r1 = QHBoxLayout(); r1.setSpacing(6)
         self.entradas["Data Apresentação"] = make_date()
-        self.entradas["Fábrica"]     = make_input()
-        self.entradas["Pagador"]     = make_input()
+        self.entradas["Fábrica"]    = make_input()
         self.entradas["Solicitante"] = make_input()
-        r1.addWidget(make_field("Data",        self.entradas["Data Apresentação"]), 1)
-        r1.addWidget(make_field("Fábrica",     self.entradas["Fábrica"]),           2)
-        r1.addWidget(make_field("Pagador",     self.entradas["Pagador"]),           2)
-        r1.addWidget(make_field("Solicitante", self.entradas["Solicitante"]),       2)
+        r1.addWidget(make_field("Data", self.entradas["Data Apresentação"]), 1)
+        r1.addWidget(make_field("Fábrica", self.entradas["Fábrica"]), 2)
+        r1.addWidget(make_field("Solicitante", self.entradas["Solicitante"]), 2)
         v.addLayout(r1)
 
         def _atualizar_origem(texto):
@@ -2845,22 +2203,11 @@ class UI(QWidget):
         r2 = QHBoxLayout(); r2.setSpacing(6)
         self.entradas["Origem"]  = make_input()
         self.entradas["Destino"] = make_input()
-        self._uf_cab             = make_input()  # campo visual no cabeçalho
         self.entradas["Cliente"] = make_input()
-        r2.addWidget(make_field("Origem",  self.entradas["Origem"]),  1)
-        r2.addWidget(make_field("Destino", self.entradas["Destino"]), 2)
-        r2.addWidget(make_field("UF",      self._uf_cab),             1)
-        r2.addWidget(make_field("Cliente", self.entradas["Cliente"]), 2)
+        r2.addWidget(make_field("Origem", self.entradas["Origem"]), 1)
+        r2.addWidget(make_field("Destino", self.entradas["Destino"]), 1)
+        r2.addWidget(make_field("Cliente", self.entradas["Cliente"]), 1)
         v.addLayout(r2)
-
-        # Sincroniza UF do cabeçalho com o campo UF de Dados da Planilha
-        def _sync_uf_cab(txt):
-            w = self.entradas.get("UF")
-            if w and isinstance(w, QLineEdit):
-                w.blockSignals(True)
-                w.setText(txt.upper())
-                w.blockSignals(False)
-        self._uf_cab.textChanged.connect(lambda t: _sync_uf_cab(t))
 
         self.entradas["Fazenda"] = make_input()
         v.addWidget(make_field("Fazenda", self.entradas["Fazenda"]))
@@ -2956,8 +2303,6 @@ class UI(QWidget):
         r1 = QHBoxLayout(); r1.setSpacing(6)
         self.entradas["Agência"]   = make_input()
         self.entradas["UF"]        = make_input()
-        self.entradas["UF"].textChanged.connect(
-            lambda t: self._uf_cab.setText(t.upper()) if hasattr(self, "_uf_cab") else None)
         self.entradas["Frete/Emp"] = make_input()
         self.entradas["Frete/Mot"] = make_input()
         r1.addWidget(make_field("Agência",   self.entradas["Agência"]),   3)
@@ -2969,27 +2314,9 @@ class UI(QWidget):
         r2 = QHBoxLayout(); r2.setSpacing(6)
         self.entradas["Rota"]         = make_input()
         self.entradas["Agenciamento"] = make_input()
-        self.entradas["Colocador"]    = make_input()
-        r2.addWidget(make_field("Rota",         self.entradas["Rota"]),         2)
-        r2.addWidget(make_field("Agenciamento", self.entradas["Agenciamento"]), 2)
-        r2.addWidget(make_field("Colocador",    self.entradas["Colocador"]),    2)
+        r2.addWidget(make_field("Rota",         self.entradas["Rota"]),         1)
+        r2.addWidget(make_field("Agenciamento", self.entradas["Agenciamento"]), 1)
         v.addLayout(r2)
-
-        r3 = QHBoxLayout(); r3.setSpacing(6)
-        self.entradas["Pagamento"]   = make_input()
-        self.entradas["Peso Total"]  = make_input()
-        self.entradas["Peso Total"].setReadOnly(True)
-        self.entradas["Peso Total"].setPlaceholderText("Auto")
-        self.entradas["Peso Total"].setStyleSheet(f"""
-            QLineEdit {{
-                background: #1c2128; border: 1px solid {BORDER2};
-                border-radius: 6px; padding: 6px 10px;
-                color: {ACCENT}; font-size: 12px; font-weight: 700;
-            }}
-        """)
-        r3.addWidget(make_field("Pagamento",  self.entradas["Pagamento"]),  2)
-        r3.addWidget(make_field("Peso Total", self.entradas["Peso Total"]), 1)
-        v.addLayout(r3)
 
         v.addStretch()
         return frame
@@ -3041,22 +2368,6 @@ class UI(QWidget):
         self.btn3.clicked.connect(self.nova_ordem)
 
         return v
-
-    def _atualizar_peso_total(self):
-        """Soma todos os campos Peso ativos e atualiza o campo Peso Total."""
-        total = 0.0
-        for i in range(4):
-            sufixo = f" {i + 1}" if i > 0 else ""
-            chave  = f"Peso{sufixo}"
-            w = self.entradas.get(chave)
-            if w and isinstance(w, QLineEdit):
-                try:
-                    total += float(str(w.text()).replace(",", "."))
-                except Exception:
-                    pass
-        w_total = self.entradas.get("Peso Total")
-        if w_total:
-            w_total.setText(str(int(total)) if total == int(total) else f"{total:.1f}")
 
     def _adicionar_linha_pedido(self, ativa=True):
         MAX = 4
@@ -3116,8 +2427,6 @@ class UI(QWidget):
                 inp.setStyleSheet("QLineEdit { padding: 2px 6px; font-size: 12px; }")
                 inp.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 inp.textChanged.connect(lambda t, i=inp: _forcar_maiusculo(i, t))
-                if chave == "Peso":
-                    inp.textChanged.connect(lambda _: self._atualizar_peso_total())
             inp_lay.addWidget(inp, stretch)
             nome = chave + sufixo
             linha[nome] = inp
@@ -3279,7 +2588,10 @@ class UI(QWidget):
                 if "Assinatura" in self.entradas:
                     self.entradas["Assinatura"].setText(self.assinatura_usuario)
 
-            self._aplicar_empresa(nome_empresa)
+            self.empresa = nome_empresa
+            cor = ACCENT if nome_empresa == "Agrovia" else DANGER
+            self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
+            self._atualizar_fundo(nome_empresa)
             dlg.accept()
 
         btn_a.clicked.connect(lambda: sel("Agrovia"))
@@ -3376,9 +2688,9 @@ class UI(QWidget):
             conta_gmail = self._dialog_escolher_conta()
             if conta_gmail is None:
                 return
-            from gerador import montar_email
+            from gerador import obter_email_fabrica, montar_email
             prev = self._dialog_preview_email(
-                "",
+                obter_email_fabrica(dados.get("Fábrica")),
                 *montar_email(dados)
             )
             if prev is None:
@@ -3392,70 +2704,28 @@ class UI(QWidget):
         self.overlay.show()
         self.overlay.raise_()
 
-        # Injeta usuário logado nos dados para gravar no Supabase
-        dados["_usuario"] = self.usuario_logado or ""
-        # Reedição sempre gera novo registro — _reeditando_id_anterior tratado em _on_sucesso
         self._thread = GeradorThread(dados, pasta, email, conta_gmail)
         self._thread.sucesso.connect(self._on_sucesso)
         self._thread.erro.connect(self._on_erro)
         self._thread.start()
 
-    def _aplicar_empresa(self, nome_empresa):
-        """Define a empresa ativa programaticamente."""
-        self.empresa = nome_empresa
-        nome_empresa = "Agrovia" if "AGRO" in str(nome_empresa).upper() else "TopBrasil"
-        self.empresa = nome_empresa
-        cor = ACCENT if nome_empresa == "Agrovia" else DANGER
-        self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
-        self._atualizar_fundo(nome_empresa)
-
     def _dialog_escolher_conta(self):
-        contas        = _listar_contas_gmail()
-        mapa_empresa  = carregar_contas_empresa()
-        empresa_atual = self.empresa or ""
-
-        # Se há uma conta mapeada para esta empresa, usa direto sem diálogo
-        conta_mapeada = mapa_empresa.get(empresa_atual)
-        if conta_mapeada and conta_mapeada in contas:
-            return conta_mapeada
-
-        # Caso contrário, abre o diálogo para escolher e opcionalmente fixar
         dlg = QDialog(self)
         dlg.setWindowTitle("Enviar por Gmail")
-        dlg.setFixedSize(420, 290)
+        dlg.setFixedSize(400, 230)
         dlg.setStyleSheet(DIALOG_SS)
 
         lay = QVBoxLayout(dlg)
-        lay.setContentsMargins(24, 20, 24, 20)
+        lay.setContentsMargins(20, 20, 20, 20)
         lay.setSpacing(10)
-
-        # Info da empresa
-        if empresa_atual:
-            lbl_emp = QLabel(f"Empresa: {empresa_atual}")
-            lbl_emp.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
-            lay.addWidget(lbl_emp)
 
         lay.addWidget(QLabel("Conta remetente:"))
 
         combo = QComboBox()
         combo.setMinimumHeight(36)
+        contas = _listar_contas_gmail()
         combo.addItems(contas if contas else ["(nenhuma conta configurada)"])
-
-        # Pré-seleciona a conta mapeada se existir mas não estiver disponível,
-        # ou a primeira da lista
-        if conta_mapeada:
-            idx = combo.findText(conta_mapeada)
-            if idx >= 0:
-                combo.setCurrentIndex(idx)
-
         lay.addWidget(combo)
-
-        # Checkbox para fixar esta conta para a empresa
-        chk_fixar = QCheckBox(f"Usar sempre esta conta para {empresa_atual}")
-        chk_fixar.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
-        chk_fixar.setChecked(bool(conta_mapeada))
-        if empresa_atual:
-            lay.addWidget(chk_fixar)
 
         btn_add = QPushButton("+ Adicionar conta Gmail")
         btn_add.setObjectName("btn_add")
@@ -3485,16 +2755,6 @@ class UI(QWidget):
             if c == "(nenhuma conta configurada)":
                 QMessageBox.warning(dlg, "Atenção", "Adicione uma conta Gmail primeiro.")
                 return
-            # Salva mapeamento se checkbox marcado
-            if empresa_atual and chk_fixar.isChecked():
-                mapa = carregar_contas_empresa()
-                mapa[empresa_atual] = c
-                salvar_contas_empresa(mapa)
-            elif empresa_atual and not chk_fixar.isChecked():
-                # Remove mapeamento se desmarcou
-                mapa = carregar_contas_empresa()
-                mapa.pop(empresa_atual, None)
-                salvar_contas_empresa(mapa)
             resultado[0] = c
             dlg.accept()
 
@@ -3507,15 +2767,15 @@ class UI(QWidget):
     def _dialog_preview_email(self, destinatario, assunto, corpo):
         from gerador import REGRAS_EMAIL
 
-        # Coleta todos os emails cadastrados em REGRAS_EMAIL
-        todos_emails = []
+        # Monta lista plana de emails únicos a partir de REGRAS_EMAIL
+        emails_rapidos = []
         vistos = set()
         for valor in REGRAS_EMAIL.values():
-            for em in valor.split(";"):
-                em = em.strip()
-                if em and "@" in em and em not in vistos:
-                    todos_emails.append(em)
-                    vistos.add(em)
+            for email in valor.split(";"):
+                email = email.strip()
+                if email and email not in vistos and "@" in email:
+                    emails_rapidos.append(email)
+                    vistos.add(email)
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Prévia do email")
@@ -3526,69 +2786,78 @@ class UI(QWidget):
         lay.setContentsMargins(20, 20, 20, 20)
         lay.setSpacing(8)
 
-        # ── Destinatário com botões de email ─────────────
-        lbl_dest = QLabel("DESTINATÁRIO")
-        lbl_dest.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
-        lay.addWidget(lbl_dest)
+        # ── Botões de email rápido ──────────────────────
+        if emails_rapidos:
+            lbl_rapido = QLabel("E-MAILS RÁPIDOS")
+            lbl_rapido.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent;")
+            lay.addWidget(lbl_rapido)
 
-        inp_d = QLineEdit(destinatario)
-        inp_d.setMinimumHeight(34)
-        inp_d.setPlaceholderText("email1@exemplo.com; email2@exemplo.com")
-        lay.addWidget(inp_d)
-
-        # Botões de seleção rápida — todos os emails cadastrados
-        if todos_emails:
-            lbl_opcoes = QLabel("SELECIONAR:")
-            lbl_opcoes.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; background: transparent; margin-top: 4px;")
-            lay.addWidget(lbl_opcoes)
-
-            wrap = QWidget(); wrap.setStyleSheet("background: transparent;")
-            flow = QHBoxLayout(wrap)
-            flow.setContentsMargins(0, 0, 0, 4)
-            flow.setSpacing(6)
-            flow.setAlignment(Qt.AlignLeft)
-            flow.setSpacing(6)
+            btn_wrap = QWidget()
+            btn_wrap.setStyleSheet("background: transparent;")
+            btn_flow = QHBoxLayout(btn_wrap)
+            btn_flow.setContentsMargins(0, 0, 0, 4)
+            btn_flow.setSpacing(6)
+            btn_flow.setAlignment(Qt.AlignLeft)
 
             email_btns = {}
 
-            def _atualizar_btns():
+            def _make_btn_email(email):
+                btn = QPushButton(email)
+                btn.setCheckable(True)
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background: transparent;
+                        border: 1px solid {BORDER2};
+                        border-radius: 5px;
+                        color: {MUTED};
+                        font-size: 10px;
+                        padding: 4px 8px;
+                    }}
+                    QPushButton:checked {{
+                        background: {ACCENT}22;
+                        border-color: {ACCENT};
+                        color: {ACCENT};
+                        font-weight: 700;
+                    }}
+                    QPushButton:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
+                """)
+                return btn
+
+            def _atualizar_botoes():
                 atual = set(e.strip() for e in inp_d.text().split(";") if e.strip())
                 for em, b in email_btns.items():
                     b.blockSignals(True)
                     b.setChecked(em in atual)
                     b.blockSignals(False)
 
-            def _toggle(email):
+            def _toggle_email(email):
                 atual = [e.strip() for e in inp_d.text().split(";") if e.strip()]
                 if email in atual:
                     atual.remove(email)
                 else:
                     atual.append(email)
-                inp_d.setText("; ".join(atual))
+                inp_d.setText(";".join(atual))
 
-            for em in todos_emails:
-                btn = QPushButton(em)
-                btn.setCheckable(True)
-                btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background: transparent; border: 1px solid {BORDER2};
-                        border-radius: 5px; color: {MUTED};
-                        font-size: 10px; padding: 4px 8px;
-                    }}
-                    QPushButton:checked {{
-                        background: {ACCENT}22; border-color: {ACCENT};
-                        color: {ACCENT}; font-weight: 700;
-                    }}
-                    QPushButton:hover {{ border-color: {ACCENT}; color: {TEXT}; }}
-                """)
-                btn.clicked.connect(lambda checked, e=em: _toggle(e))
-                email_btns[em] = btn
-                flow.addWidget(btn)
+            for email in emails_rapidos:
+                b = _make_btn_email(email)
+                email_btns[email] = b
+                btn_flow.addWidget(b)
+                b.clicked.connect(lambda checked, em=email: _toggle_email(em))
 
-            flow.addStretch()
-            lay.addWidget(wrap)
-            inp_d.textChanged.connect(lambda _: _atualizar_btns())
-            _atualizar_btns()
+            btn_flow.addStretch()
+            lay.addWidget(btn_wrap)
+
+        # ── Campos ──────────────────────────────────────
+        lay.addWidget(QLabel("DESTINATÁRIO"))
+        inp_d = QLineEdit(destinatario)
+        inp_d.setMinimumHeight(32)
+        lay.addWidget(inp_d)
+
+        # Atualiza botões ao editar o campo manualmente
+        if emails_rapidos:
+            inp_d.textChanged.connect(lambda _: _atualizar_botoes())
+            # Estado inicial dos botões
+            _atualizar_botoes()
 
         lay.addWidget(QLabel("ASSUNTO"))
         inp_a = QLineEdit(assunto); inp_a.setMinimumHeight(36)
@@ -3624,48 +2893,12 @@ class UI(QWidget):
         for b in [self.btn1, self.btn2, self.btn3]:
             b.setEnabled(True)
 
-        # Deleta arquivos antigos se for reeedição
-        if hasattr(self, "_arquivos_para_deletar"):
-            for arq in self._arquivos_para_deletar:
-                try:
-                    if arq and os.path.exists(arq) and arq != caminho:
-                        os.remove(arq)
-                except Exception:
-                    pass
-            del self._arquivos_para_deletar
-
-        supabase_id = self._thread.dados.get("_supabase_id_resultado")
+        conta   = self._planilha_widget._combo_conta.currentText()
         salvar_historico(
             self._thread.dados, caminho,
-            usuario     = self.usuario_logado,
-            supabase_id = supabase_id,
+            conta   = conta if conta != "(nenhuma conta)" else None,
+            usuario = self.usuario_logado,
         )
-
-        # Se era reedição, marcar ordem anterior como ALTERADO no Supabase
-        if hasattr(self, "_reeditando_id_anterior") and self._reeditando_id_anterior:
-            try:
-                import urllib.request as _ureq
-                obs = f"Alterado para #{supabase_id}" if supabase_id else "Alterado"
-                body = json.dumps({
-                    "status":     "ALTERADO",
-                    "ativo":      False,
-                    "observacao": obs,
-                }).encode()
-                req = _ureq.Request(
-                    f"{SUPABASE_URL}/rest/v1/carregamentos?id=eq.{self._reeditando_id_anterior}",
-                    data=body,
-                    headers={
-                        "apikey":        SUPABASE_KEY,
-                        "Authorization": f"Bearer {SUPABASE_KEY}",
-                        "Content-Type":  "application/json",
-                        "Prefer":        "return=minimal",
-                    },
-                    method="PATCH"
-                )
-                _ureq.urlopen(req, timeout=8)
-            except Exception:
-                pass
-            del self._reeditando_id_anterior
 
         msg = QMessageBox(self)
         msg.setWindowTitle("Sucesso")
@@ -3681,16 +2914,11 @@ class UI(QWidget):
         """)
         msg.exec()
 
-        # Popup de gravação na planilha removido — dados já vão para o Supabase automaticamente
+        self._dialog_gravar_planilha(self._thread.dados)
 
     def _dialog_gravar_planilha(self, dados):
         conta = self._planilha_widget._combo_conta.currentText()
         if not conta or conta == "(nenhuma conta)":
-            # Sem conta configurada — avisa e pede para selecionar
-            QMessageBox.warning(
-                self, "Nenhuma conta configurada",
-                "Configure uma conta Gmail na aba 'Controle de Pedidos' para gravar na planilha."
-            )
             return
 
         dlg = QDialog(self)
@@ -3746,7 +2974,7 @@ class UI(QWidget):
         lbl_st = QLabel("STATUS:")
         lbl_st.setStyleSheet(f"color: {MUTED}; font-size: 9px; font-weight: 700; letter-spacing: 0.5px; background: transparent;")
         combo_st = QComboBox()
-        combo_st.addItems(["AGUARDANDO", "DESCARGA", "CARREGADO", "MARCADO", "CHEGA"])
+        combo_st.addItems(["DESCARGA", "CARREGADO", "MARCADO", "CHEGA", "AGUARDANDO"])
         combo_st.setStyleSheet(f"""
             QComboBox {{
                 background: {SURFACE}; border: 1px solid {BORDER2};
@@ -3879,9 +3107,9 @@ class UI(QWidget):
             empresa = dados.get("empresa", "")
             if empresa:
                 self.empresa = empresa
-                cor = ACCENT if "AGRO" in empresa.upper() else DANGER
+                cor = ACCENT if empresa == "Agrovia" else DANGER
                 self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
-                self._atualizar_fundo("Agrovia" if "AGRO" in empresa.upper() else "TopBrasil")
+                self._atualizar_fundo(empresa)
             else:
                 self.escolher_empresa()
 
@@ -3902,9 +3130,9 @@ class UI(QWidget):
             self._adicionar_linha_pedido()
 
         campos_simples = ["Fábrica", "Cliente", "Fazenda", "Origem",
-                          "Destino", "Motorista", "Cavalo", "Pagador",
-                          "Solicitante", "Agência", "UF", "Frete/Emp", "Frete/Mot",
-                          "Rota", "Agenciamento", "Colocador", "Pagamento", "Peso Total"]
+                          "Destino", "Motorista", "Cavalo", "Solicitante",
+                          "Agência", "UF", "Frete/Emp", "Frete/Mot",
+                          "Rota", "Agenciamento"]
         for campo in campos_simples:
             valor = dados.get(campo, "")
             if not valor:
@@ -3914,11 +3142,6 @@ class UI(QWidget):
                 w.setText(valor)
             elif isinstance(w, QComboBox):
                 w.setEditText(valor)
-
-        # Sincroniza campo UF do cabeçalho com o de Dados da Planilha
-        uf_val = dados.get("UF", "")
-        if hasattr(self, "_uf_cab") and uf_val:
-            self._uf_cab.setText(uf_val)
 
         for idx in range(num_pedidos):
             sufixo = f" {idx + 1}" if idx > 0 else ""
@@ -3938,8 +3161,6 @@ class UI(QWidget):
 
         emp = dados.get("empresa")
         if emp:
-            self.empresa = emp
-            emp = "Agrovia" if "AGRO" in emp.upper() else "TopBrasil"
             self.empresa = emp
             cor = ACCENT if emp == "Agrovia" else DANGER
             self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")

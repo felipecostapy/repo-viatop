@@ -1,11 +1,5 @@
-<<<<<<< Updated upstream
-[10/04/2026 17:35:51]
+[12/04/2026 22:29:00]
 Local:  3.0.5
 Remota: 3.0.5
-=======
-[08/04/2026 20:49:41]
-Local:  3.0.2
-Remota: 3.0.2
->>>>>>> Stashed changes
 URL:    https://raw.githubusercontent.com/felipecostapy/repo-viatop/master/version.txt
 Resultado: versao local ja atualizada
