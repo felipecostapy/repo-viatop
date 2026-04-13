@@ -1739,14 +1739,26 @@ ORIGENS_FABRICA = {
     "ARMAZEM VITORIA":  "CANDEIAS - BA",
     "ARMAZÉM VITÓRIA":  "CANDEIAS - BA",
     "YARA":             "CANDEIAS - BA",
-    "TIMAC":            "CAMAÇARI - BA",
+    "UNIGEL":           "CAMAÇARI - BA",
+    # TIMAC tratado separadamente em _origem_por_fabrica
 }
 
 def _origem_por_fabrica(fabrica):
-    """Retorna a origem fixa para uma fábrica, ou '' se não reconhecida."""
-    t = fabrica.upper().strip()
+    """Retorna a origem fixa para uma fábrica, ou '' se não reconhecida.
+    Normaliza acentos para garantir match independente de grafia."""
+    import unicodedata
+    def _norm(s):
+        return unicodedata.normalize("NFD", s.upper().strip()).encode("ascii","ignore").decode()
+    t = _norm(fabrica)
+
+    # TIMAC: verifica localidade específica primeiro
+    if "TIMAC" in t:
+        if "CANDEIAS" in t:
+            return "CANDEIAS - BA"
+        return "CAMAÇARI - BA"
+
     for chave, origem in ORIGENS_FABRICA.items():
-        if chave in t:
+        if _norm(chave) in t:
             return origem
     return ""
 
