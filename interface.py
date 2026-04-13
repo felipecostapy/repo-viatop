@@ -2650,6 +2650,16 @@ class UI(QWidget):
     def setar_data_hoje(self):
         self.entradas["Data Apresentação"].setDate(QDate.currentDate())
 
+    def _aplicar_empresa(self, nome_empresa):
+        """Define a empresa ativa sem abrir diálogo."""
+        if not nome_empresa:
+            return
+        nome = "Agrovia" if "AGRO" in str(nome_empresa).upper() else "TopBrasil"
+        self.empresa = nome
+        cor = ACCENT if nome == "Agrovia" else DANGER
+        self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
+        self._atualizar_fundo(nome)
+
     def escolher_empresa(self):
         usuarios = carregar_usuarios()
         is_primeiro_login = not self.usuario_logado
