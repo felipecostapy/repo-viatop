@@ -626,24 +626,77 @@ class HistoricoWidget(QWidget):
         arquivo_xlsx   = arquivo_antigo if arquivo_antigo and arquivo_antigo.endswith(".xlsx") else ""
         arquivo_pdf    = arquivo_xlsx.replace(".xlsx",".pdf") if arquivo_xlsx else ""
 
-        motorista = dados.get("Motorista","")
-        placa     = dados.get("Cavalo","")
+        motorista   = dados.get("Motorista","")
+        placa       = dados.get("Cavalo","")
+        empresa_orig = dados.get("empresa","")
+        emp_norm     = "Agrovia" if "AGRO" in str(empresa_orig).upper() else "TopBrasil"
+        cor_emp      = "#238636" if emp_norm == "Agrovia" else "#da3633"
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Editar Ordem")
-        dlg.setFixedSize(400, 170)
+        dlg.setFixedSize(440, 240)
         dlg.setStyleSheet(DIALOG_SS)
         lay = QVBoxLayout(dlg)
         lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(12)
+        lay.setSpacing(10)
 
         lbl = QLabel(f"Editar ordem de <b>{motorista.title()}</b> — placa <b>{placa}</b>")
         lbl.setWordWrap(True)
         lay.addWidget(lbl)
+
+        lbl_emp = QLabel(f"Empresa atual: <b style='color:{cor_emp}'>{emp_norm.upper()}</b>")
+        lbl_emp.setStyleSheet("background: transparent;")
+        lbl_emp.setWordWrap(True)
+        lay.addWidget(lbl_emp)
+
         lbl2 = QLabel("Uma nova ordem sera gerada e a anterior marcada como ALTERADO.")
         lbl2.setStyleSheet(f"color: #e3b341; font-size: 11px; background: transparent;")
         lbl2.setWordWrap(True)
         lay.addWidget(lbl2)
+
+        # Seleção de empresa para nova ordem
+        lbl3 = QLabel("Empresa da nova ordem:")
+        lbl3.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        lay.addWidget(lbl3)
+
+        emp_btns = QHBoxLayout(); emp_btns.setSpacing(8)
+        btn_agro = QPushButton("AGROVIA")
+        btn_top  = QPushButton("TOPBRASIL")
+        for b in [btn_agro, btn_top]:
+            b.setFixedHeight(32)
+            b.setCheckable(True)
+            b.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; border: 1px solid {BORDER2};
+                    border-radius: 6px; color: {MUTED}; font-size: 11px; font-weight: 700;
+                }}
+                QPushButton:checked {{ border-color: #238636; color: #238636; background: #23863622; }}
+            """)
+        btn_top.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: 1px solid {BORDER2};
+                border-radius: 6px; color: {MUTED}; font-size: 11px; font-weight: 700;
+            }}
+            QPushButton:checked {{ border-color: #da3633; color: #da3633; background: #da363322; }}
+        """)
+        # Pré-selecionar empresa atual
+        if emp_norm == "Agrovia":
+            btn_agro.setChecked(True)
+        else:
+            btn_top.setChecked(True)
+
+        def _sel_agro():
+            btn_agro.setChecked(True)
+            btn_top.setChecked(False)
+        def _sel_top():
+            btn_top.setChecked(True)
+            btn_agro.setChecked(False)
+        btn_agro.clicked.connect(_sel_agro)
+        btn_top.clicked.connect(_sel_top)
+
+        emp_btns.addWidget(btn_agro)
+        emp_btns.addWidget(btn_top)
+        lay.addLayout(emp_btns)
 
         btns = QHBoxLayout()
         bc = QPushButton("CANCELAR"); bc.setObjectName("btn_cancel")
@@ -654,6 +707,9 @@ class HistoricoWidget(QWidget):
 
         def continuar():
             dlg.accept()
+            empresa_nova = "Agrovia" if btn_agro.isChecked() else "TopBrasil"
+            dados["empresa"] = empresa_nova
+
             ui = None
             w = self.parent()
             while w:
@@ -663,9 +719,8 @@ class HistoricoWidget(QWidget):
             if ui is None:
                 QMessageBox.warning(self, "Aviso", "Nao foi possivel navegar para o formulario.")
                 return
-            empresa_ord = dados.get("empresa","")
-            if empresa_ord and hasattr(ui, "_aplicar_empresa"):
-                ui._aplicar_empresa(empresa_ord)
+            if hasattr(ui, "_aplicar_empresa"):
+                ui._aplicar_empresa(empresa_nova)
             ui._preencher_campos(dados)
             ui._nav(0)
             if sb_id:
@@ -3371,10 +3426,7 @@ class UI(QWidget):
             # Define empresa direto pela tag — sem abrir diálogo
             empresa = dados.get("empresa", "")
             if empresa:
-                self.empresa = empresa
-                cor = ACCENT if empresa == "Agrovia" else DANGER
-                self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
-                self._atualizar_fundo(empresa)
+                self._aplicar_empresa(empresa)
             else:
                 self.escolher_empresa()
 
@@ -3428,10 +3480,7 @@ class UI(QWidget):
 
         emp = dados.get("empresa")
         if emp:
-            self.empresa = emp
-            cor = ACCENT if emp == "Agrovia" else DANGER
-            self.btn1.setStyleSheet(f"background-color: {cor}; color: white; border: none;")
-            self._atualizar_fundo(emp)
+            self._aplicar_empresa(emp)
 
     def nova_ordem(self):
         # Verifica se há algum campo preenchido antes de perguntar
