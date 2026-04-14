@@ -437,6 +437,7 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         # "Pagador": "O11",  # removido — Pagador não vai para o PDF por enquanto
         "Fábrica":       "D15",
         "Cliente":       "I15",
+        "Solicitante":   "O11",
         "Fazenda":       "O15",
         "Motorista":     "D27",
         "CPF":           "D28",
