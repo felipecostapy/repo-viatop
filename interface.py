@@ -723,8 +723,8 @@ class HistoricoWidget(QWidget):
                 ui._aplicar_empresa(empresa_nova)
             ui._preencher_campos(dados)
             ui._nav(0)
-            if sb_id:
-                ui._reeditando_id_anterior = sb_id
+            if sb_id and hasattr(ui, "_entrar_modo_edicao"):
+                ui._entrar_modo_edicao(sb_id)
             if arquivo_xlsx:
                 ui._arquivos_para_deletar = [arquivo_xlsx, arquivo_pdf]
 
@@ -2552,12 +2552,30 @@ class UI(QWidget):
             btn.setMinimumHeight(40)
             v.addWidget(btn)
 
+        v.addWidget(self._banner_edicao)
         v.addStretch()
 
         self.btn_wpp.clicked.connect(self.importar_whatsapp)
         self.btn1.clicked.connect(lambda: self.executar(False))
         self.btn2.clicked.connect(self._gravar_banco)
         self.btn3.clicked.connect(self.nova_ordem)
+
+        # Banner modo edição
+        self._banner_edicao = QLabel("")
+        self._banner_edicao.setAlignment(Qt.AlignCenter)
+        self._banner_edicao.setStyleSheet("""
+            QLabel {
+                background: #3a2a00;
+                border: 1px solid #e3b341;
+                border-radius: 6px;
+                color: #e3b341;
+                font-size: 11px;
+                font-weight: 700;
+                padding: 6px 12px;
+                letter-spacing: 0.5px;
+            }
+        """)
+        self._banner_edicao.hide()
 
         return v
 
@@ -2712,6 +2730,25 @@ class UI(QWidget):
 
     def setar_data_hoje(self):
         self.entradas["Data Apresentação"].setDate(QDate.currentDate())
+
+    def _entrar_modo_edicao(self, id_anterior):
+        """Ativa o modo edição — mostra banner e muda textos dos botões."""
+        self._reeditando_id_anterior = id_anterior
+        self._banner_edicao.setText(f"✏  EDITANDO ORDEM #{id_anterior} — Gere ou grave para salvar a nova ordem")
+        self._banner_edicao.show()
+        self.btn1.setText("GERAR NOVA ORDEM")
+        self.btn2.setText("GRAVAR NO BANCO")
+        self.btn3.setText("CANCELAR EDIÇÃO")
+
+    def _sair_modo_edicao(self):
+        """Desativa o modo edição — restaura textos dos botões."""
+        if hasattr(self, "_reeditando_id_anterior"):
+            del self._reeditando_id_anterior
+        self._banner_edicao.hide()
+        self._banner_edicao.setText("")
+        self.btn1.setText("GERAR ORDEM")
+        self.btn2.setText("GRAVAR NO BANCO")
+        self.btn3.setText("NOVA ORDEM")
 
     def _aplicar_empresa(self, nome_empresa):
         """Define a empresa ativa sem abrir diálogo."""
@@ -2982,6 +3019,7 @@ class UI(QWidget):
             if hasattr(self, "_historico_widget") and self._historico_widget:
                 self._historico_widget.recarregar()
 
+            self._sair_modo_edicao()
             QMessageBox.information(self, "Gravado",
                 f"Carregamento #{novo_id} gravado no banco de dados.")
         except Exception as e:
@@ -3226,6 +3264,8 @@ class UI(QWidget):
             if hasattr(self, "_reeditando_id_anterior"):
                 del self._reeditando_id_anterior
 
+        self._sair_modo_edicao()
+
         # Recarrega histórico se estiver visível
         if hasattr(self, "_historico_widget") and self._historico_widget:
             self._historico_widget.recarregar()
@@ -3386,8 +3426,15 @@ class UI(QWidget):
                 return
 
             dados = parsear_mensagem_whatsapp(texto)
+            em_edicao = getattr(self, "_reeditando_id_anterior", None)
 
-            # Verifica se há campos preenchidos e pede confirmação de limpeza
+            if em_edicao:
+                # Modo edição: só atualiza campos, preserva empresa e modo
+                self._preencher_campos(dados)
+                dlg.accept()
+                return
+
+            # Modo normal: pergunta se limpa campos existentes
             tem_dados = any(
                 (isinstance(v, QLineEdit) and v.text().strip()) or
                 (isinstance(v, QComboBox) and v.currentText().strip())
@@ -3491,6 +3538,21 @@ class UI(QWidget):
             self._aplicar_empresa(emp)
 
     def nova_ordem(self):
+        # Se em modo edição, cancelar edição sem confirmar
+        if getattr(self, "_reeditando_id_anterior", None):
+            self._sair_modo_edicao()
+            for v in self.entradas.values():
+                if isinstance(v, QLineEdit): v.clear()
+                elif isinstance(v, QComboBox): v.setCurrentIndex(-1)
+                elif isinstance(v, QDateEdit): v.setDate(QDate.currentDate())
+            for i, (stack, linha) in enumerate(self._pedido_linhas):
+                for inp in linha.values():
+                    if isinstance(inp, QLineEdit): inp.clear()
+                    elif isinstance(inp, QComboBox): inp.setCurrentIndex(-1)
+                stack.setCurrentIndex(1 if i == 0 else 0)
+            self.setar_data_hoje()
+            return
+
         # Verifica se há algum campo preenchido antes de perguntar
         tem_dados = any(
             (isinstance(v, QLineEdit) and v.text().strip()) or
