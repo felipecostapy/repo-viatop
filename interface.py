@@ -346,17 +346,23 @@ class HistoricoWidget(QWidget):
             QLineEdit:focus {{ border-color: {ACCENT}; }}
         """)
         self._inp_busca.textChanged.connect(self._filtrar)
-        btn_att = QPushButton("↺  ATUALIZAR")
-        btn_att.setStyleSheet(f"""
+        self._btn_att = QPushButton("↺  ATUALIZAR")
+        self._btn_att.setStyleSheet(f"""
             QPushButton {{
                 background: transparent; border: 1px solid {BORDER2};
                 border-radius: 6px; color: {MUTED}; padding: 6px 12px; font-size: 12px;
             }}
             QPushButton:hover {{ color: {TEXT}; border-color: {ACCENT}; }}
+            QPushButton:disabled {{ opacity: 0.4; }}
         """)
-        btn_att.clicked.connect(self.recarregar)
+        self._btn_att.clicked.connect(self.recarregar)
+
+        self._lbl_carregando = QLabel("")
+        self._lbl_carregando.setStyleSheet(f"color: {ACCENT}; font-size: 11px; background: transparent;")
+
         topo.addWidget(titulo); topo.addStretch()
-        topo.addWidget(self._inp_busca); topo.addWidget(btn_att)
+        topo.addWidget(self._lbl_carregando)
+        topo.addWidget(self._inp_busca); topo.addWidget(self._btn_att)
         root.insertLayout(0, topo)
 
         self._container = QWidget()
@@ -373,18 +379,37 @@ class HistoricoWidget(QWidget):
         self.recarregar()
 
     def recarregar(self):
+        # Bloquear botão e mostrar feedback
+        self._btn_att.setEnabled(False)
+        self._btn_att.setText("Carregando...")
+        self._lbl_carregando.setText("⟳ Buscando ordens...")
+        QApplication.processEvents()
+
+        # Limpar cards atuais
         while self._vbox.count() > 1:
             item = self._vbox.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         self._todos_cards = []
 
-        # Tenta Supabase, fallback local
-        registros = carregar_historico_supabase()
-        fonte = "supabase"
-        if not registros:
-            registros = carregar_historico()
-            fonte = "local"
+        # Rodar em thread para não travar UI
+        class _Thread(QThread):
+            concluido = Signal(list, str)
+            def run(self_):
+                registros = carregar_historico_supabase()
+                if registros:
+                    self_.concluido.emit(registros, "supabase")
+                else:
+                    self_.concluido.emit(carregar_historico(), "local")
+
+        self._thread_hist = _Thread()
+        self._thread_hist.concluido.connect(self._on_historico_carregado)
+        self._thread_hist.start()
+
+    def _on_historico_carregado(self, registros, fonte):
+        self._btn_att.setEnabled(True)
+        self._btn_att.setText("↺  ATUALIZAR")
+        self._lbl_carregando.setText("")
 
         if not registros:
             vazio = QLabel("Nenhuma ordem gerada ainda.")
@@ -2378,10 +2403,32 @@ class UI(QWidget):
         r1.addWidget(make_field("Solicitante", self.entradas["Solicitante"]), 2)
         v.addLayout(r1)
 
+        SOLICITANTE_POR_FABRICA = {
+            "ARMAZEM VITORIA":  "FERTIMAXI",
+            "ARMAZÉM VITÓRIA":  "FERTIMAXI",
+            "INTERMARITIMA":    "FERTIMAXI",
+            "INTERMARÍTIMA":    "FERTIMAXI",
+        }
+
         def _atualizar_origem(texto):
+            import unicodedata as _ud
+            t = _ud.normalize("NFD", texto.upper().strip()).encode("ascii","ignore").decode()
             origem_fixa = _origem_por_fabrica(texto)
             if origem_fixa:
                 self.entradas["Origem"].setText(origem_fixa)
+            # Solicitante automático
+            sol = ""
+            for chave, valor in SOLICITANTE_POR_FABRICA.items():
+                chave_n = _ud.normalize("NFD", chave.upper()).encode("ascii","ignore").decode()
+                if chave_n in t:
+                    sol = valor
+                    break
+            w_sol = self.entradas.get("Solicitante")
+            if w_sol and isinstance(w_sol, QLineEdit):
+                if sol:
+                    w_sol.setText(sol)
+                elif not w_sol.text():
+                    pass  # não limpa se já preenchido manualmente
 
         self.entradas["Fábrica"].textChanged.connect(_atualizar_origem)
 
@@ -3002,6 +3049,12 @@ class UI(QWidget):
                 "Preencha: " + " | ".join(erros))
             return
         dados["_usuario"] = self.usuario_logado or ""
+
+        # Feedback imediato — bloquear botão
+        self.btn2.setEnabled(False)
+        self.btn2.setText("Gravando...")
+        QApplication.processEvents()
+
         try:
             novo_id = gravar_supabase(dados, usuario=self.usuario_logado or "")
             dados["_supabase_id_resultado"] = novo_id
@@ -3039,9 +3092,13 @@ class UI(QWidget):
                 self._historico_widget.recarregar()
 
             self._sair_modo_edicao()
+            self.btn2.setEnabled(True)
+            self.btn2.setText("GRAVAR NO BANCO")
             QMessageBox.information(self, "Gravado",
                 f"Carregamento #{novo_id} gravado no banco de dados.")
         except Exception as e:
+            self.btn2.setEnabled(True)
+            self.btn2.setText("GRAVAR NO BANCO")
             QMessageBox.critical(self, "Erro", str(e))
 
     def _dialog_escolher_conta(self):

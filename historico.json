@@ -1,5 +1,37 @@
 [
   {
+    "data_hora": "14/04/2026 20:44",
+    "usuario": "FELIPE COSTA",
+    "motorista": "GILMAR SCHULTZ",
+    "placa": "IRA-1B65",
+    "empresa": "TOPBRASIL",
+    "arquivo": "C:/Users/Felp/Desktop\\OR384_GILMAR_IRA-1B65.xlsx"
+  },
+  {
+    "data_hora": "14/04/2026 20:04",
+    "usuario": "FELIPE COSTA",
+    "motorista": "MOT2",
+    "placa": "PL2",
+    "empresa": "TOPBRASIL",
+    "arquivo": "C:/Users/Felp/Desktop\\OR383_MOT2_PL2.xlsx"
+  },
+  {
+    "data_hora": "14/04/2026 20:03",
+    "usuario": "FELIPE COSTA",
+    "motorista": "MOT1",
+    "placa": "PL1",
+    "empresa": "AGROVIA",
+    "arquivo": "C:/Users/Felp/Desktop\\OR382_MOT1_PL1.xlsx"
+  },
+  {
+    "data_hora": "14/04/2026 20:02",
+    "usuario": "FELIPE COSTA",
+    "motorista": "MOT1",
+    "placa": "PL1",
+    "empresa": "AGROVIA",
+    "arquivo": "C:/Users/Felp/Desktop\\OR381_MOT1_PL1.xlsx"
+  },
+  {
     "data_hora": "13/04/2026 09:33",
     "usuario": "FELIPE",
     "motorista": "VALDINEI TELLES RIBEIRO",

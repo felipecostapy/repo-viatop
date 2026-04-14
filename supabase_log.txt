@@ -2,3 +2,7 @@
 [12/04/2026 23:16:57] _on_sucesso: id_anterior=306
 [13/04/2026 09:19:32] _on_sucesso: id_anterior=NÃO DEFINIDO
 [13/04/2026 09:20:55] _on_sucesso: id_anterior=NÃO DEFINIDO
+[14/04/2026 20:02:45] _on_sucesso: id_anterior=NÃO DEFINIDO
+[14/04/2026 20:03:21] _on_sucesso: id_anterior=NÃO DEFINIDO
+[14/04/2026 20:04:55] _on_sucesso: id_anterior=381
+[14/04/2026 20:44:47] _on_sucesso: id_anterior=NÃO DEFINIDO

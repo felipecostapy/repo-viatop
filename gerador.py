@@ -437,7 +437,6 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
         # "Pagador": "O11",  # removido — Pagador não vai para o PDF por enquanto
         "Fábrica":       "D15",
         "Cliente":       "I15",
-        "Solicitante":   "O11",
         "Fazenda":       "O15",
         "Motorista":     "D27",
         "CPF":           "D28",
@@ -582,6 +581,17 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
                 ws.range(prod_cel).value = prod
                 ws.range(peso_cel).value = peso
                 ws.range(emb_cel).value  = emb
+
+        # Solicitante em O11 apenas para Intermarítima e Armazém Vitória
+        import unicodedata as _ud
+        def _norm_fab(s):
+            return _ud.normalize("NFD", str(s).upper()).encode("ascii","ignore").decode()
+        fabrica_norm = _norm_fab(dados.get("Fábrica","") or "")
+        FABRICAS_SOL = ["INTERMARITIMA", "ARMAZEM VITORIA"]
+        if any(f in fabrica_norm for f in FABRICAS_SOL):
+            sol = str(dados.get("Solicitante","") or "").upper()
+            if sol:
+                ws.range("O11").value = sol
 
         # Destino no Excel = "CIDADE - UF"
         destino_val = dados.get("Destino", "")
