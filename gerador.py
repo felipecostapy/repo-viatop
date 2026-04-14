@@ -168,8 +168,10 @@ def gravar_supabase(dados, usuario=None):
         return None
 
     def _float(v):
-        try: return float(str(v or "0").replace(".", "").replace(",", "."))
-        except: return 0.0
+        try:
+            f = float(str(v or "0").replace(".", "").replace(",", "."))
+            return int(f) if f == int(f) else f
+        except: return 0
 
     registro = {
         "data":         _data(dados.get("Data Apresentação")),
@@ -250,8 +252,10 @@ def atualizar_supabase(supabase_id, dados, usuario=None):
         return None
 
     def _float(v):
-        try: return float(str(v or "0").replace(".", "").replace(",", "."))
-        except: return 0.0
+        try:
+            f = float(str(v or "0").replace(".", "").replace(",", "."))
+            return int(f) if f == int(f) else f
+        except: return 0
 
     registro = {
         "data":         _data(dados.get("Data Apresentação")),
