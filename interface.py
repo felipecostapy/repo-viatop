@@ -236,7 +236,7 @@ def carregar_historico_supabase(limite=300):
         req = urllib.request.Request(
             f"{SUPABASE_URL}/rest/v1/carregamentos"
             f"?select=id,criado_em,data,filial,pagador,motorista,placa,"
-            f"destino,uf,peso,status,pedido,produto,embalagem,colocador,"
+            f"fabrica,destino,uf,peso,status,pedido,produto,embalagem,colocador,"
             f"usuario,ativo,observacao,pagamento,frete_emp,frete_mot,rota,"
             f"agenciamento,origem,cpf,contato,carroceria,carreta1,carreta2,"
             f"carreta3,fazenda,solicitante"
@@ -3496,7 +3496,7 @@ class UI(QWidget):
         dlg.exec()
 
     def _preencher_campos(self, dados):
-                                               
+
         num_pedidos = dados.get("_num_pedidos", 1)
         while len(self._pedido_linhas) < num_pedidos:
             self._adicionar_linha_pedido()
@@ -3507,6 +3507,15 @@ class UI(QWidget):
                           "Rota", "Agenciamento", "Colocador", "Pagamento",
                           "Peso Total", "CPF", "Contato", "Carroceria",
                           "Carreta 1", "Carreta 2", "Carreta 3"]
+
+        # Limpa todos os campos antes de preencher — evita dados da ordem anterior persistirem
+        for campo in campos_simples:
+            w = self.entradas.get(campo)
+            if isinstance(w, QLineEdit):
+                w.clear()
+            elif isinstance(w, QComboBox):
+                w.setCurrentIndex(-1)
+
         for campo in campos_simples:
             valor = dados.get(campo, "")
             if not valor:
