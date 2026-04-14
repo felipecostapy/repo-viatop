@@ -2548,19 +2548,7 @@ class UI(QWidget):
         self.btn3 = QPushButton("NOVA ORDEM")
         self.btn3.setObjectName("btn_nova")
 
-        for btn in [self.btn_wpp, self.btn1, self.btn2, self.btn3]:
-            btn.setMinimumHeight(40)
-            v.addWidget(btn)
-
-        v.addWidget(self._banner_edicao)
-        v.addStretch()
-
-        self.btn_wpp.clicked.connect(self.importar_whatsapp)
-        self.btn1.clicked.connect(lambda: self.executar(False))
-        self.btn2.clicked.connect(self._gravar_banco)
-        self.btn3.clicked.connect(self.nova_ordem)
-
-        # Banner modo edição
+        # Banner modo edição — criado ANTES de ser adicionado ao layout
         self._banner_edicao = QLabel("")
         self._banner_edicao.setAlignment(Qt.AlignCenter)
         self._banner_edicao.setStyleSheet("""
@@ -2576,6 +2564,18 @@ class UI(QWidget):
             }
         """)
         self._banner_edicao.hide()
+
+        for btn in [self.btn_wpp, self.btn1, self.btn2, self.btn3]:
+            btn.setMinimumHeight(40)
+            v.addWidget(btn)
+
+        v.addWidget(self._banner_edicao)
+        v.addStretch()
+
+        self.btn_wpp.clicked.connect(self.importar_whatsapp)
+        self.btn1.clicked.connect(lambda: self.executar(False))
+        self.btn2.clicked.connect(self._gravar_banco)
+        self.btn3.clicked.connect(self.nova_ordem)
 
         return v
 
