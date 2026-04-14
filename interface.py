@@ -238,7 +238,7 @@ def carregar_historico_supabase(limite=300):
             f"?select=id,criado_em,data,filial,pagador,motorista,placa,"
             f"fabrica,destino,uf,peso,status,pedido,produto,embalagem,colocador,"
             f"usuario,ativo,observacao,pagamento,frete_emp,frete_mot,rota,"
-            f"agenciamento,origem,cpf,contato,carroceria,carreta1,carreta2,"
+            f"agenciamento,agencia,origem,cpf,contato,carroceria,carreta1,carreta2,"
             f"carreta3,fazenda,solicitante"
             f"&order=id.desc&limit={limite}",
             headers={
@@ -605,6 +605,7 @@ class HistoricoWidget(QWidget):
                 "Frete/Mot":    str(r.get("frete_mot","") or ""),
                 "Rota":         str(r.get("rota","") or ""),
                 "Agenciamento": str(r.get("agenciamento","") or ""),
+                "Agência":      str(r.get("agencia","") or ""),
                 "Origem":       str(r.get("origem","") or ""),
                 "CPF":          str(r.get("cpf","") or ""),
                 "Contato":      str(r.get("contato","") or ""),
@@ -2910,6 +2911,7 @@ class UI(QWidget):
             return
 
         dados = self.coletar()
+        dados["_usuario"] = self.usuario_logado or ""
 
         # ── Validações obrigatórias ──────────────────────────
         erros = []
