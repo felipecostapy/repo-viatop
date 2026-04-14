@@ -239,7 +239,10 @@ def carregar_historico_supabase(limite=300):
             f"fabrica,destino,uf,peso,status,pedido,produto,embalagem,colocador,"
             f"usuario,ativo,observacao,pagamento,frete_emp,frete_mot,rota,"
             f"agenciamento,agencia,origem,cpf,contato,carroceria,carreta1,carreta2,"
-            f"carreta3,fazenda,solicitante"
+            f"carreta3,fazenda,solicitante,"
+            f"peso1,peso2,peso3,peso4,"
+            f"pedido2,produto2,embalagem2,pedido3,produto3,embalagem3,"
+            f"pedido4,produto4,embalagem4"
             f"&order=id.desc&limit={limite}",
             headers={
                 "apikey":        SUPABASE_KEY,
@@ -616,6 +619,20 @@ class HistoricoWidget(QWidget):
                 "Fazenda":      str(r.get("fazenda","") or ""),
                 "Solicitante":  str(r.get("solicitante","") or ""),
                 "Peso Total":   str(r.get("peso","") or ""),
+                "_num_pedidos":  sum(1 for k in ["pedido","pedido2","pedido3","pedido4"] if r.get(k)),
+                "Peso":         str(r.get("peso1","") or r.get("peso","") or ""),
+                "Peso 2":       str(r.get("peso2","") or ""),
+                "Peso 3":       str(r.get("peso3","") or ""),
+                "Peso 4":       str(r.get("peso4","") or ""),
+                "Pedido 2":     str(r.get("pedido2","") or ""),
+                "Produto 2":    str(r.get("produto2","") or ""),
+                "Embalagem 2":  str(r.get("embalagem2","") or ""),
+                "Pedido 3":     str(r.get("pedido3","") or ""),
+                "Produto 3":    str(r.get("produto3","") or ""),
+                "Embalagem 3":  str(r.get("embalagem3","") or ""),
+                "Pedido 4":     str(r.get("pedido4","") or ""),
+                "Produto 4":    str(r.get("produto4","") or ""),
+                "Embalagem 4":  str(r.get("embalagem4","") or ""),
             }
 
         if not dados:
@@ -3508,7 +3525,8 @@ class UI(QWidget):
                           "Solicitante", "Agência", "UF", "Frete/Emp", "Frete/Mot",
                           "Rota", "Agenciamento", "Colocador", "Pagamento",
                           "Peso Total", "CPF", "Contato", "Carroceria",
-                          "Carreta 1", "Carreta 2", "Carreta 3"]
+                          "Carreta 1", "Carreta 2", "Carreta 3",
+                          "Peso", "Peso 2", "Peso 3", "Peso 4"]
 
         # Limpa todos os campos antes de preencher — evita dados da ordem anterior persistirem
         for campo in campos_simples:
