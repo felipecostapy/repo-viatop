@@ -128,8 +128,14 @@ def _forcar_maiusculo(inp, texto):
         inp.blockSignals(False)
 
 def _formatar_placa(inp, texto):
+    # Remove tudo exceto letras e números (mantém hífen se já digitado)
     limpo = re.sub(r"[^A-Za-z0-9]", "", texto).upper()
-    formatado = limpo[:3] + "-" + limpo[3:7] if len(limpo) > 3 else limpo
+    # Formato: XXX-XXXX + sufixo (ex: RCY5C45BA → RCY-5C45BA)
+    # Os 3 primeiros são letras/prefixo, depois hífen, depois o resto
+    if len(limpo) > 3:
+        formatado = limpo[:3] + "-" + limpo[3:]
+    else:
+        formatado = limpo
     inp.blockSignals(True)
     c = inp.cursorPosition()
     inp.setText(formatado)
@@ -236,7 +242,7 @@ def carregar_historico_supabase(limite=300):
         req = urllib.request.Request(
             f"{SUPABASE_URL}/rest/v1/carregamentos"
             f"?select=id,criado_em,data,filial,pagador,motorista,placa,"
-            f"fabrica,destino,uf,peso,status,pedido,produto,embalagem,colocador,"
+            f"fabrica,destino,uf,peso,status,pedido,produto,embalagem,colocador,cliente,"
             f"usuario,ativo,observacao,pagamento,frete_emp,frete_mot,rota,"
             f"agenciamento,agencia,origem,cpf,contato,carroceria,carreta1,carreta2,"
             f"carreta3,fazenda,solicitante,"
@@ -365,6 +371,38 @@ class HistoricoWidget(QWidget):
         topo.addWidget(self._inp_busca); topo.addWidget(self._btn_att)
         root.insertLayout(0, topo)
 
+        # Stack: 0 = loading, 1 = cards
+        self._stack_hist = QStackedWidget()
+        self._stack_hist.setStyleSheet("background: transparent;")
+
+        # Página 0 — loading
+        pg_load = QWidget()
+        pg_load.setStyleSheet("background: transparent;")
+        load_lay = QVBoxLayout(pg_load)
+        load_lay.setAlignment(Qt.AlignCenter)
+        self._lbl_load_anim = QLabel("⟳")
+        self._lbl_load_anim.setAlignment(Qt.AlignCenter)
+        self._lbl_load_anim.setStyleSheet(f"color: {ACCENT}; font-size: 36px; background: transparent;")
+        lbl_load_txt = QLabel("Sincronizando histórico...")
+        lbl_load_txt.setAlignment(Qt.AlignCenter)
+        lbl_load_txt.setStyleSheet(f"color: {MUTED}; font-size: 13px; background: transparent;")
+        load_lay.addStretch()
+        load_lay.addWidget(self._lbl_load_anim)
+        load_lay.addSpacing(8)
+        load_lay.addWidget(lbl_load_txt)
+        load_lay.addStretch()
+
+        # Timer para animar o ícone
+        self._load_timer = QTimer()
+        self._load_timer.setInterval(300)
+        _frames = ["⟳", "↻", "⟳", "↺"]
+        self._load_frame = [0]
+        def _animar():
+            self._load_frame[0] = (self._load_frame[0] + 1) % len(_frames)
+            self._lbl_load_anim.setText(_frames[self._load_frame[0]])
+        self._load_timer.timeout.connect(_animar)
+
+        # Página 1 — cards
         self._container = QWidget()
         self._container.setStyleSheet("background: transparent;")
         self._vbox = QVBoxLayout(self._container)
@@ -373,16 +411,21 @@ class HistoricoWidget(QWidget):
         self._vbox.addStretch()
 
         scroll.setWidget(self._container)
-        root.addWidget(scroll)
+
+        self._stack_hist.addWidget(pg_load)    # índice 0
+        self._stack_hist.addWidget(scroll)     # índice 1
+        root.addWidget(self._stack_hist)
 
         self._todos_cards = []
         self.recarregar()
 
     def recarregar(self):
-        # Bloquear botão e mostrar feedback
+        # Mostrar tela de loading
+        self._stack_hist.setCurrentIndex(0)
+        self._load_timer.start()
         self._btn_att.setEnabled(False)
         self._btn_att.setText("Carregando...")
-        self._lbl_carregando.setText("⟳ Buscando ordens...")
+        self._lbl_carregando.setText("")
         QApplication.processEvents()
 
         # Limpar cards atuais
@@ -407,6 +450,8 @@ class HistoricoWidget(QWidget):
         self._thread_hist.start()
 
     def _on_historico_carregado(self, registros, fonte):
+        self._load_timer.stop()
+        self._stack_hist.setCurrentIndex(1)
         self._btn_att.setEnabled(True)
         self._btn_att.setText("↺  ATUALIZAR")
         self._lbl_carregando.setText("")
@@ -620,7 +665,7 @@ class HistoricoWidget(QWidget):
                 "Motorista":  str(r.get("motorista","") or ""),
                 "Cavalo":     str(r.get("placa","") or ""),
                 "Pagador":    str(r.get("pagador","") or ""),
-                "Cliente":    str(r.get("pagador","") or ""),
+                "Cliente":    str(r.get("cliente","") or r.get("pagador","") or ""),
                 "Fábrica":    str(r.get("fabrica","") or ""),
                 "Destino":    str(r.get("destino","") or ""),
                 "UF":         str(r.get("uf","") or ""),
@@ -3695,4 +3740,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = UI()
     win.show()
-    sys.exit(app.exec())
+    sys.exit(app.exec()) 
+    
+    
