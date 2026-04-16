@@ -486,11 +486,11 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     primeiro_nome = limpar_nome(motorista_completo.split()[0] if motorista_completo else "SEM")
 
     def _fmt_placa(valor):
-        """Formata placa para XXX-XXXX. Aplica apenas na gravação."""
+        """Formata placa para XXX-XXXX ou XXX-XXXXXUF. Preserva sufixo de UF."""
         if not valor or str(valor).strip() in ("", "SEM"):
             return valor
         limpo = re.sub(r"[^A-Za-z0-9]", "", str(valor)).upper()
-        return limpo[:3] + "-" + limpo[3:7] if len(limpo) > 3 else limpo
+        return limpo[:3] + "-" + limpo[3:] if len(limpo) > 3 else limpo
 
     cavalo_raw = dados.get("Cavalo", "SEM")
     cavalo_formatado = _fmt_placa(cavalo_raw)
