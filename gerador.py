@@ -169,7 +169,15 @@ def gravar_supabase(dados, usuario=None):
 
     def _float(v):
         try:
-            f = float(str(v or "0").replace(".", "").replace(",", "."))
+            s = str(v or "0").strip()
+            # Formato BR: 1.234,56 → tem ponto E vírgula → remove ponto, troca vírgula
+            if "," in s and "." in s:
+                s = s.replace(".", "").replace(",", ".")
+            # Só vírgula: 49,08 → troca por ponto
+            elif "," in s:
+                s = s.replace(",", ".")
+            # Só ponto: 49.08 → já é decimal, não mexe
+            f = float(s)
             return int(f) if f == int(f) else f
         except: return 0
 
@@ -268,7 +276,15 @@ def atualizar_supabase(supabase_id, dados, usuario=None):
 
     def _float(v):
         try:
-            f = float(str(v or "0").replace(".", "").replace(",", "."))
+            s = str(v or "0").strip()
+            # Formato BR: 1.234,56 → tem ponto E vírgula → remove ponto, troca vírgula
+            if "," in s and "." in s:
+                s = s.replace(".", "").replace(",", ".")
+            # Só vírgula: 49,08 → troca por ponto
+            elif "," in s:
+                s = s.replace(",", ".")
+            # Só ponto: 49.08 → já é decimal, não mexe
+            f = float(s)
             return int(f) if f == int(f) else f
         except: return 0
 

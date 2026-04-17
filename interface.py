@@ -119,6 +119,18 @@ def make_date():
     d.setMinimumHeight(32)
     return d
 
+def _to_float(v):
+    """Converte string para float aceitando tanto ponto quanto vírgula decimal."""
+    try:
+        s = str(v or "0").strip()
+        if "," in s and "." in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif "," in s:
+            s = s.replace(",", ".")
+        return float(s)
+    except:
+        return 0.0
+
 def _forcar_maiusculo(inp, texto):
     if texto != texto.upper():
         inp.blockSignals(True)
@@ -2698,7 +2710,7 @@ class UI(QWidget):
             w = self.entradas.get(chave)
             if w and isinstance(w, QLineEdit):
                 try:
-                    total += float(str(w.text()).replace(",", "."))
+                    total += _to_float(w.text())
                 except Exception:
                     pass
         w_total = self.entradas.get("Peso Total")
@@ -3740,6 +3752,4 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = UI()
     win.show()
-    sys.exit(app.exec()) 
-    
-    
+    sys.exit(app.exec())
