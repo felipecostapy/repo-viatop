@@ -2341,8 +2341,7 @@ class UI(QWidget):
         self._nav_btns = []
         self._nav_btns.append(make_nav_btn("📋", "Gerar Ordem", 0))
         self._nav_btns.append(make_nav_btn("🕐", "Histórico", 1))
-        self._nav_btns.append(make_nav_btn("📦", "Controle de Pedidos", 2))
-        self._nav_btns.append(make_nav_btn("📊", "Controle de Ordens", 3))
+        self._nav_btns.append(make_nav_btn("⚙", "Configurações", 2))
         self._nav_btns[0].setChecked(True)
 
         for b in self._nav_btns:
@@ -2358,10 +2357,7 @@ class UI(QWidget):
         self._stack.addWidget(self._build_pagina_ordem())
         self._historico_widget = HistoricoWidget()
         self._stack.addWidget(self._historico_widget)
-        self._planilha_widget = PlanilhaWidget()
-        self._stack.addWidget(self._planilha_widget)
-        self._base_widget = BaseWidget()
-        self._stack.addWidget(self._base_widget)
+        self._stack.addWidget(self._build_pagina_config())
 
         root.addWidget(self._stack, 1)
 
@@ -2371,10 +2367,106 @@ class UI(QWidget):
             b.setChecked(i == idx)
         if idx == 1:
             self._historico_widget.recarregar()
-        if idx == 2:
-            self._planilha_widget._atualizar_contas()
-        if idx == 3:
-            self._base_widget._atualizar_contas()
+
+    def _build_pagina_config(self):
+        """Página de configurações — contas Gmail e preferências."""
+        pagina = QWidget()
+        pagina.setStyleSheet("background: transparent;")
+        root = QVBoxLayout(pagina)
+        root.setContentsMargins(24, 24, 24, 24)
+        root.setSpacing(16)
+
+        titulo = QLabel("CONFIGURAÇÕES")
+        titulo.setStyleSheet(f"color: {TEXT}; font-size: 14px; font-weight: 700; letter-spacing: 1px; background: transparent;")
+        root.addWidget(titulo)
+
+        # ── Contas Gmail ──
+        frame_gmail, content_gmail = make_card("Contas Gmail")
+        v_gmail = QVBoxLayout(content_gmail)
+        v_gmail.setSpacing(8)
+
+        lbl_info = QLabel("Contas conectadas para envio de email:")
+        lbl_info.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        v_gmail.addWidget(lbl_info)
+
+        self._cfg_lista_contas = QLabel("")
+        self._cfg_lista_contas.setStyleSheet(f"color: {TEXT}; font-size: 12px; background: transparent;")
+        self._cfg_lista_contas.setWordWrap(True)
+        v_gmail.addWidget(self._cfg_lista_contas)
+
+        btn_add_gmail = QPushButton("+ Adicionar conta Gmail")
+        btn_add_gmail.setFixedHeight(34)
+        btn_add_gmail.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent; border: 1px solid {ACCENT};
+                border-radius: 6px; color: {ACCENT}; font-size: 12px; font-weight: 700;
+            }}
+            QPushButton:hover {{ background: {ACCENT}22; }}
+        """)
+        btn_add_gmail.clicked.connect(self._cfg_adicionar_gmail)
+        v_gmail.addWidget(btn_add_gmail)
+        root.addWidget(frame_gmail)
+
+        # ── Empresa padrão ──
+        frame_emp, content_emp = make_card("Empresa padrão")
+        v_emp = QHBoxLayout(content_emp)
+        v_emp.setSpacing(8)
+        self._cfg_btn_agro = QPushButton("AGROVIA")
+        self._cfg_btn_top  = QPushButton("TOPBRASIL")
+        for b, emp in [(self._cfg_btn_agro, "Agrovia"), (self._cfg_btn_top, "TopBrasil")]:
+            b.setFixedHeight(34)
+            cor = ACCENT if emp == "Agrovia" else DANGER
+            b.setStyleSheet(f"""
+                QPushButton {{
+                    background: transparent; border: 1px solid {cor};
+                    border-radius: 6px; color: {cor}; font-size: 12px; font-weight: 700;
+                }}
+                QPushButton:hover {{ background: {cor}22; }}
+            """)
+            b.clicked.connect(lambda _, e=emp: self._aplicar_empresa(e))
+            v_emp.addWidget(b)
+        v_emp.addStretch()
+        root.addWidget(frame_emp)
+
+        # ── Conta por empresa ──
+        frame_conta, content_conta = make_card("Conta Gmail por Empresa")
+        v_conta = QVBoxLayout(content_conta)
+        v_conta.setSpacing(8)
+        contas_emp = carregar_contas_empresa()
+        for emp in ["Agrovia", "TopBrasil"]:
+            cor = ACCENT if emp == "Agrovia" else DANGER
+            conta_assoc = contas_emp.get(emp, "Não configurada")
+            lbl = QLabel(f"<b style='color:{cor}'>{emp.upper()}</b>  →  {conta_assoc}")
+            lbl.setStyleSheet("background: transparent; font-size: 11px;")
+            v_conta.addWidget(lbl)
+        lbl_dica = QLabel("Ao enviar email, selecione 'Lembrar esta conta' para associar automaticamente.")
+        lbl_dica.setStyleSheet(f"color: {MUTED}; font-size: 10px; background: transparent;")
+        lbl_dica.setWordWrap(True)
+        v_conta.addWidget(lbl_dica)
+        root.addWidget(frame_conta)
+
+        root.addStretch()
+        self._cfg_atualizar_contas()
+        return pagina
+
+    def _cfg_atualizar_contas(self):
+        try:
+            contas = _listar_contas_gmail()
+            if contas:
+                self._cfg_lista_contas.setText("  |  ".join(f"✓ {c}" for c in contas))
+            else:
+                self._cfg_lista_contas.setText("Nenhuma conta conectada.")
+        except Exception:
+            self._cfg_lista_contas.setText("Nenhuma conta.")
+
+    def _cfg_adicionar_gmail(self):
+        try:
+            nova = adicionar_conta_gmail()
+            if nova:
+                QMessageBox.information(self, "Conta adicionada", f"Conta {nova} conectada com sucesso.")
+                self._cfg_atualizar_contas()
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", str(e))
 
     def _build_pagina_ordem(self):
         pagina = QWidget()
@@ -2468,6 +2560,9 @@ class UI(QWidget):
             "INTERMARÍTIMA":    "FERTIMAXI",
         }
 
+        # Fábricas que ativam email automático
+        FABRICAS_EMAIL_AUTO = ["ARMAZEM VITORIA", "ARMAZEM VITÓRIA", "INTERMARITIMA", "INTERMARITIMA"]
+
         def _atualizar_origem(texto):
             import unicodedata as _ud
             t = _ud.normalize("NFD", texto.upper().strip()).encode("ascii","ignore").decode()
@@ -2486,7 +2581,9 @@ class UI(QWidget):
                 if sol:
                     w_sol.setText(sol)
                 elif not w_sol.text():
-                    pass  # não limpa se já preenchido manualmente
+                    pass
+
+
 
         self.entradas["Fábrica"].textChanged.connect(_atualizar_origem)
 
@@ -3190,7 +3287,7 @@ class UI(QWidget):
     def _dialog_escolher_conta(self):
         dlg = QDialog(self)
         dlg.setWindowTitle("Enviar por Gmail")
-        dlg.setFixedSize(400, 230)
+        dlg.setFixedSize(420, 270)
         dlg.setStyleSheet(DIALOG_SS)
 
         lay = QVBoxLayout(dlg)
@@ -3203,7 +3300,23 @@ class UI(QWidget):
         combo.setMinimumHeight(36)
         contas = _listar_contas_gmail()
         combo.addItems(contas if contas else ["(nenhuma conta configurada)"])
+
+        # Selecionar automaticamente pela empresa atual
+        empresa_atual = getattr(self, "empresa", "") or ""
+        contas_emp = carregar_contas_empresa()
+        conta_sugerida = contas_emp.get(empresa_atual, "")
+        if conta_sugerida:
+            idx = combo.findText(conta_sugerida)
+            if idx >= 0:
+                combo.setCurrentIndex(idx)
+
         lay.addWidget(combo)
+
+        # Checkbox para lembrar associação empresa→conta
+        chk_lembrar = QCheckBox(f"Lembrar esta conta para {empresa_atual}")
+        chk_lembrar.setStyleSheet(f"color: {MUTED}; font-size: 11px; background: transparent;")
+        chk_lembrar.setChecked(bool(conta_sugerida))
+        lay.addWidget(chk_lembrar)
 
         btn_add = QPushButton("+ Adicionar conta Gmail")
         btn_add.setObjectName("btn_add")
@@ -3233,6 +3346,11 @@ class UI(QWidget):
             if c == "(nenhuma conta configurada)":
                 QMessageBox.warning(dlg, "Atenção", "Adicione uma conta Gmail primeiro.")
                 return
+            # Salvar associação empresa→conta se checkbox marcado
+            if chk_lembrar.isChecked() and empresa_atual:
+                mapa = carregar_contas_empresa()
+                mapa[empresa_atual] = c
+                salvar_contas_empresa(mapa)
             resultado[0] = c
             dlg.accept()
 
@@ -3325,9 +3443,14 @@ class UI(QWidget):
             btn_flow.addStretch()
             lay.addWidget(btn_wrap)
 
+            # Marcar botões dos emails que já estão no destinatário inicial
+            QTimer.singleShot(0, _atualizar_botoes)
+
         # ── Campos ──────────────────────────────────────
         lay.addWidget(QLabel("DESTINATÁRIO"))
-        inp_d = QLineEdit(destinatario)
+        # Limpar espaço se vier vazio de obter_email_fabrica
+        dest_inicial = (destinatario or "").strip()
+        inp_d = QLineEdit(dest_inicial)
         inp_d.setMinimumHeight(32)
         lay.addWidget(inp_d)
 

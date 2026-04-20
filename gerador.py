@@ -383,7 +383,7 @@ def obter_email_fabrica(fabrica):
         if chave in fabrica:
             return REGRAS_EMAIL[chave]
 
-    return "SEU_EMAIL@gmail.com"
+    return " "
 
 def montar_email(dados):
     cavalo = dados.get("Cavalo", "")
