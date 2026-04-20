@@ -414,7 +414,7 @@ def _encontrar_excel():
             return c
     return None
 
-def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
+def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None, imprimir=False):
     import xlwings as xw
 
     obrigatorios = ["Motorista", "Cavalo", "Pedido"]
@@ -670,6 +670,13 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None):
     finally:
         _fechar_tudo()
 
+
+    # Impressão automática na impressora padrão
+    if imprimir and os.path.exists(pdf_path):
+        try:
+            os.startfile(os.path.abspath(pdf_path), "print")
+        except Exception as e_print:
+            pass  # Silencioso — não bloqueia o fluxo
 
     if enviar_email:
         if not conta_gmail:

@@ -2107,16 +2107,17 @@ class GeradorThread(QThread):
     sucesso = Signal(str)
     erro    = Signal(str)
 
-    def __init__(self, dados, pasta, email, conta_gmail=None):
+    def __init__(self, dados, pasta, email, conta_gmail=None, imprimir=False):
         super().__init__()
         self.dados       = dados
         self.pasta       = pasta
         self.email       = email
         self.conta_gmail = conta_gmail
+        self.imprimir    = imprimir
 
     def run(self):
         try:
-            caminho = gerar_ordem(self.dados, self.pasta, self.email, self.conta_gmail)
+            caminho = gerar_ordem(self.dados, self.pasta, self.email, self.conta_gmail, imprimir=self.imprimir)
             self.sucesso.emit(caminho)
         except Exception as e:
             import traceback
@@ -2671,6 +2672,25 @@ class UI(QWidget):
         self.btn3.setObjectName("btn_nova")
 
         # Banner modo edição — criado ANTES de ser adicionado ao layout
+        # Checkbox imprimir
+        self._chk_imprimir = QCheckBox("🖨  Imprimir PDF")
+        self._chk_imprimir.setStyleSheet(f"""
+            QCheckBox {{
+                color: {MUTED}; font-size: 11px; background: transparent;
+            }}
+            QCheckBox:hover {{ color: {TEXT}; }}
+            QCheckBox::indicator {{
+                width: 14px; height: 14px;
+                border: 1px solid {BORDER2}; border-radius: 3px;
+                background: transparent;
+            }}
+            QCheckBox::indicator:checked {{
+                background: {ACCENT}; border-color: {ACCENT};
+            }}
+        """)
+        self._chk_imprimir.setChecked(False)
+        v.addWidget(self._chk_imprimir)
+
         self._banner_edicao = QLabel("")
         self._banner_edicao.setAlignment(Qt.AlignCenter)
         self._banner_edicao.setStyleSheet("""
@@ -3089,7 +3109,7 @@ class UI(QWidget):
         self.overlay.show()
         self.overlay.raise_()
 
-        self._thread = GeradorThread(dados, pasta, email, conta_gmail)
+        self._thread = GeradorThread(dados, pasta, email, conta_gmail, imprimir=self._chk_imprimir.isChecked())
         self._thread.sucesso.connect(self._on_sucesso)
         self._thread.erro.connect(self._on_erro)
         self._thread.start()
