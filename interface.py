@@ -313,6 +313,7 @@ def carregar_contas_empresa():
 def salvar_contas_empresa(mapa):
     path = _contas_empresa_path()
     path.write_text(json.dumps(mapa, ensure_ascii=False, indent=2), encoding="utf-8")
+
 def _usuarios_path():
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent / "usuarios.json"
