@@ -371,9 +371,9 @@ def formatar_telefone(telefone):
     return telefone
 
 REGRAS_EMAIL = {
-    "FERTIMAXI": "agendamento@fertimaxi.com;paulo@fertimaxi.com",
-    "TIMAC": "EMAIL_AQUI_3",
-    "INTERMARITIMA": "EMAIL_AQUI_4"
+    "FERTIMAXI": "agendamento@fertimaxi.com;paulo@fertimaxi.com;luis.cerqueira@fertimaxi.com.br;marcos.brandao@fertimaxi.com.br",
+    "INTERMARITIMA": "tmi@intermaritima.com.br",
+    "ARMAZEM VITORIA": "balancaazv02@vitoriaarmazens.com.br;balancaazv01@vitoriaarmazens.com.br"
 }
 
 def obter_email_fabrica(fabrica):
@@ -624,6 +624,13 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None, impri
         wb.save()
         app.api.CalculateFull()
 
+        # Impressão via Excel — antes de fechar o workbook
+        if imprimir:
+            try:
+                wb.api.PrintOut()
+            except Exception:
+                pass
+
         # Tentativa 1: exportar via xlwings
         try:
             wb.api.ExportAsFixedFormat(0, pdf_path)
@@ -671,26 +678,7 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None, impri
         _fechar_tudo()
 
 
-    # Impressão automática na impressora padrão via PowerShell (nativo Windows)
-    if imprimir and os.path.exists(pdf_path):
-        try:
-            import ctypes
-            pdf_abs = os.path.abspath(pdf_path)
-            # ShellExecute nativo do Windows — envia para impressora padrão
-            ctypes.windll.shell32.ShellExecuteW(
-                None,        # hwnd
-                "print",     # operação
-                pdf_abs,     # arquivo
-                None,        # parâmetros
-                None,        # diretório
-                0            # SW_HIDE
-            )
-        except Exception:
-            # Fallback: abre o PDF para o usuário imprimir manualmente
-            try:
-                os.startfile(os.path.abspath(pdf_path))
-            except Exception:
-                pass
+
 
     if enviar_email:
         if not conta_gmail:
