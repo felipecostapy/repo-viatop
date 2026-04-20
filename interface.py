@@ -2672,11 +2672,9 @@ class UI(QWidget):
         self.btn3.setObjectName("btn_nova")
 
         # Banner modo edição — criado ANTES de ser adicionado ao layout
-        # Checkbox imprimir
-        self._chk_imprimir = QCheckBox("🖨  Imprimir PDF")
-        self._chk_imprimir.setStyleSheet(f"""
+        _chk_ss = f"""
             QCheckBox {{
-                color: {MUTED}; font-size: 11px; background: transparent;
+                color: {MUTED}; font-size: 11px; background: transparent; padding: 4px 0;
             }}
             QCheckBox:hover {{ color: {TEXT}; }}
             QCheckBox::indicator {{
@@ -2687,7 +2685,16 @@ class UI(QWidget):
             QCheckBox::indicator:checked {{
                 background: {ACCENT}; border-color: {ACCENT};
             }}
-        """)
+        """
+        # Checkbox email
+        self._chk_email = QCheckBox("📧  Enviar por email")
+        self._chk_email.setStyleSheet(_chk_ss)
+        self._chk_email.setChecked(False)
+        v.addWidget(self._chk_email)
+
+        # Checkbox imprimir
+        self._chk_imprimir = QCheckBox("🖨  Imprimir PDF")
+        self._chk_imprimir.setStyleSheet(_chk_ss)
         self._chk_imprimir.setChecked(False)
         v.addWidget(self._chk_imprimir)
 
@@ -3046,13 +3053,15 @@ class UI(QWidget):
                 dados[k] = v.text()
         return dados
 
-    def executar(self, email):
+    def executar(self, email=False):
         pasta = QFileDialog.getExistingDirectory(self, "Salvar em")
         if not pasta:
             return
 
         dados = self.coletar()
         dados["_usuario"] = self.usuario_logado or ""
+        # Checkbox de email sobrepõe o parâmetro
+        email = self._chk_email.isChecked()
 
         # ── Validações obrigatórias ──────────────────────────
         erros = []
