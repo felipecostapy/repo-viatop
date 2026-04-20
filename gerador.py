@@ -671,12 +671,22 @@ def gerar_ordem(dados, pasta_destino, enviar_email=True, conta_gmail=None, impri
         _fechar_tudo()
 
 
-    # Impressão automática na impressora padrão
+    # Impressão automática na impressora padrão via PowerShell (nativo Windows)
     if imprimir and os.path.exists(pdf_path):
         try:
-            os.startfile(os.path.abspath(pdf_path), "print")
-        except Exception as e_print:
-            pass  # Silencioso — não bloqueia o fluxo
+            import subprocess
+            pdf_abs = os.path.abspath(pdf_path)
+            # PowerShell usa o app padrão do Windows para imprimir PDF
+            cmd = (
+                f'Start-Process -FilePath "{pdf_abs}" '
+                f'-Verb Print -WindowStyle Hidden'
+            )
+            subprocess.Popen(
+                ["powershell", "-WindowStyle", "Hidden", "-Command", cmd],
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+        except Exception:
+            pass
 
     if enviar_email:
         if not conta_gmail:
